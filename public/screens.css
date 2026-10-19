@@ -249,3 +249,28 @@
 @media (max-width: 640px) {
   .dialog.wide { max-width: none; max-height: 92vh; }
 }
+
+/* ── Phase 4: remote storage, collaboration, the community gallery ────── */
+
+/* The bar under the header while a room is open: who is in it, and out. */
+.collab-strip {
+  display: flex; align-items: center; gap: 10px; padding: 4px 16px;
+  background: rgb(var(--surface)); border-bottom: 1px solid rgb(var(--line));
+  font-size: 14px; line-height: 20px;
+}
+.collab-peer { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; }
+
+/* A small round colour swatch (who is who in a room). */
+.dot { width: 10px; height: 10px; border-radius: 50%; flex: none; display: inline-block; }
+
+/* A wider dialog (Collaborate). */
+.dialog.dialog-wide { max-width: 34rem; }
+
+/* Remote cursors, portalled into the page surface (.art), so they live in
+   page coordinates and pan and zoom with it. Never take a pointer. */
+.remote-cursor { position: absolute; pointer-events: none; z-index: 30; line-height: 0; }
+.remote-cursor-name {
+  display: inline-block; margin: 2px 0 0 10px; padding: 1px 6px; border-radius: 4px;
+  color: rgb(var(--on-accent)); font-size: 11px; line-height: 16px; white-space: nowrap;
+}
+.remote-select { position: absolute; pointer-events: none; z-index: 29; border: 1.5px solid; border-radius: 2px; }

@@ -3,7 +3,9 @@
 // `images`. Version 2 adds the library's own stores: `assets` (images, SVGs
 // and fonts a person imported), `components` (saved reusable pieces) and
 // `prefs` (favourites). Version 3 adds `versions`, each design's earlier
-// versions (indexed by designId). The staging demo writes to its own
+// versions (indexed by designId). Version 4 adds `outbox`, the changes
+// waiting to go to a remote store (persist/adapters/queue.js). The
+// staging demo writes to its own
 // database, `home-studio-demo`, so demo designs never mix with a viewer's own.
 
 import { openDB } from 'idb';
@@ -16,6 +18,11 @@ function upgrade(db, _oldVersion, _newVersion, tx) {
     if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: 'id' });
   }
   if (!db.objectStoreNames.contains('prefs')) db.createObjectStore('prefs');
+  if (!db.objectStoreNames.contains('outbox')) {
+    db.createObjectStore('outbox', { keyPath: 'id' }).createIndex('designId', 'designId');
+  } else if (!tx.objectStore('outbox').indexNames.contains('designId')) {
+    tx.objectStore('outbox').createIndex('designId', 'designId');
+  }
   if (!db.objectStoreNames.contains('versions')) {
     db.createObjectStore('versions', { keyPath: 'id' }).createIndex('designId', 'designId');
   } else if (!tx.objectStore('versions').indexNames.contains('designId')) {
@@ -23,7 +30,7 @@ function upgrade(db, _oldVersion, _newVersion, tx) {
   }
 }
 
-export const DB_VERSION = 3;
+export const DB_VERSION = 4;
 export async function openDesignsDb(demo, name) {
   return openDB(name || (demo ? 'home-studio-demo' : 'home-studio'), DB_VERSION, { upgrade });
 }

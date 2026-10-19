@@ -41,6 +41,12 @@
     --on-danger: 255 255 255;
     --focus: 37 84 214;      /* the keyboard focus ring */
     --guide: 219 39 119;     /* live alignment lines and their tags */
+    --peer-1: 185 28 28;     /* collaborators' cursors: one colour per person, */
+    --peer-2: 21 128 61;     /* picked from the peer id so every screen agrees; */
+    --peer-3: 146 64 14;     /* light-look values stay dark enough for white text */
+    --peer-4: 124 58 237;
+    --peer-5: 2 112 175;
+    --peer-6: 219 39 119;
   }
   .dark {
     --ground: 22 22 21;
@@ -55,6 +61,12 @@
     --on-danger: 69 10 10;
     --focus: 125 160 255;
     --guide: 244 114 182;
+    --peer-1: 248 113 113;
+    --peer-2: 74 222 128;
+    --peer-3: 250 204 21;
+    --peer-4: 167 139 250;
+    --peer-5: 56 189 248;
+    --peer-6: 244 114 182;
   }
   /* el.hidden = true hides an element even when a class gives it a display
      (flex, the components below). */

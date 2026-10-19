@@ -22,4 +22,8 @@ export const icons = {
   file: (p) => <Icon {...p}><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z" /><path d="M14 3v5h5M9 13h6M9 17h6" /></Icon>,
   download: (p) => <Icon {...p}><path d="M12 4v11M7 10l5 5 5-5M5 20h14" /></Icon>,
   trash: (p) => <Icon {...p}><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13" /></Icon>,
+  users: (p) => <Icon {...p}><circle cx="9" cy="8" r="3.2" /><path d="M3.5 19a5.5 5.5 0 0111 0" /><path d="M16 5.5a3 3 0 010 5.5M17.5 19a5.5 5.5 0 00-2-4.2" /></Icon>,
+  globe: (p) => <Icon {...p}><circle cx="12" cy="12" r="8.5" /><path d="M3.5 12h17M12 3.5c2.5 2.3 3.8 5.2 3.8 8.5s-1.3 6.2-3.8 8.5c-2.5-2.3-3.8-5.2-3.8-8.5s1.3-6.2 3.8-8.5z" /></Icon>,
+  cloud: (p) => <Icon {...p}><path d="M7 18a4 4 0 01-.6-7.95A5.5 5.5 0 0117.3 9.6 3.75 3.75 0 0116.8 18z" /></Icon>,
+  link: (p) => <Icon {...p}><path d="M9.5 14.5l5-5" /><path d="M13 7l1.8-1.8a3.5 3.5 0 015 5L18 12" /><path d="M11 17l-1.8 1.8a3.5 3.5 0 01-5-5L6 12" /></Icon>,
 };
