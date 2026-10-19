@@ -6,16 +6,20 @@ import { uid, newElement } from '../doc/model.js';
 import { sanitizeSvg, svgSize, isRecolorable } from './svg.js';
 import { FONT_FILE } from './fonts.js';
 
-export const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+export const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif', 'image/bmp'];
 export const IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 export const FONT_MAX_BYTES = 10 * 1024 * 1024;
 export const IMPORT_ACCEPT = 'image/png,image/jpeg,image/gif,image/webp,image/svg+xml,.svg,.ttf,.otf,.woff,.woff2';
 
 export function classifyFile(file) {
   const name = file.name || '';
+  if (/\.homestudio$/i.test(name)) return 'project';
+  if (/\.homestudio-backup$/i.test(name)) return 'backup';
+  if (/\.pdf$/i.test(name) || file.type === 'application/pdf') return 'pdf';
+  if (/\.heic$/i.test(name) || file.type === 'image/heic') return 'heic';
   if (file.type === 'image/svg+xml' || /\.svg$/i.test(name)) return 'svg';
   if (FONT_FILE.test(name) || /^font\//.test(file.type || '')) return 'font';
-  if (IMAGE_TYPES.includes(file.type) || /\.(png|jpe?g|gif|webp)$/i.test(name)) return 'image';
+  if (IMAGE_TYPES.includes(file.type) || /\.(png|jpe?g|gif|webp|avif|bmp)$/i.test(name)) return 'image';
   return null;
 }
 

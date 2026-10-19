@@ -2,6 +2,7 @@
 // Pure data and pure functions — no DOM, no React, no storage.
 
 import { SYSTEM_FONTS, SYSTEM_LABELS, fontStack } from '../assets/fonts.js';
+import { wrapLines } from '../export/textLayout.js';
 
 export const uid = () =>
   Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
@@ -161,27 +162,13 @@ export function pageIsValid(w, h) {
 }
 
 // Rough text height for a text element: wraps `el.text` to `el.w` at the
-// element's font. Runs in the browser only (needs a measuring context).
+// element's font, with the same rule the export serialiser uses. Runs in the
+// browser only (needs a measuring context).
 export function measureTextHeight(el) {
   const ctx = document.createElement('canvas').getContext('2d');
   ctx.font = `${el.italic ? 'italic ' : ''}${el.weight} ${el.size}px ${fontStack(el.font)}`;
-  const spacing = el.letterSpacing || 0;
-  const width = (s) => ctx.measureText(s).width + spacing * s.length;
   const lh = el.lineHeight || 1.25;
-  let lines = 0;
-  for (const para of String(el.text).split('\n')) {
-    let line = '';
-    for (const word of para.split(' ')) {
-      const next = line ? line + ' ' + word : word;
-      if (line && width(next) > el.w) {
-        lines += 1;
-        line = word;
-      } else {
-        line = next;
-      }
-    }
-    lines += 1;
-  }
+  const lines = wrapLines(el, (_e, s) => ctx.measureText(s).width).flat().length;
   return Math.max(el.size * lh, lines * el.size * lh + 8);
 }
 

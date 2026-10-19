@@ -13,9 +13,13 @@ function upgrade(db) {
     if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: 'id' });
   }
   if (!db.objectStoreNames.contains('prefs')) db.createObjectStore('prefs');
+  if (!db.objectStoreNames.contains('versions')) {
+    const v = db.createObjectStore('versions', { keyPath: 'id' });
+    v.createIndex('designId', 'designId');
+  }
 }
 
-export const DB_VERSION = 2;
+export const DB_VERSION = 3;
 export async function openDesignsDb(demo, name) {
   return openDB(name || (demo ? 'home-studio-demo' : 'home-studio'), DB_VERSION, { upgrade });
 }
@@ -35,19 +39,22 @@ export async function getDesign(db, id) {
 }
 
 export async function deleteDesign(db, id) {
-  await db.delete('designs', id);
-  // Deleting a design also deletes its images: collect every imageId the
-  // design's elements reference, then drop those blobs.
+  // Read the design first, then drop its images, its restore points, then
+  // the row itself — the earlier order deleted the row before reading it,
+  // so images were never cleaned up.
   const design = await getDesign(db, id);
-  if (!design) return;
   const imageIds = new Set();
-  for (const page of design.pages) {
-    for (const el of page.elements) {
-      if (el.type === 'image' && el.imageId) imageIds.add(el.imageId);
-      for (const c of el.children || []) if (c.type === 'image' && c.imageId) imageIds.add(c.imageId);
+  if (design) {
+    for (const page of design.pages) {
+      for (const el of page.elements) {
+        if (el.type === 'image' && el.imageId) imageIds.add(el.imageId);
+        for (const c of el.children || []) if (c.type === 'image' && c.imageId) imageIds.add(c.imageId);
+      }
     }
   }
   for (const imageId of imageIds) await db.delete('images', imageId);
+  for (const v of await listVersions(db, id)) await db.delete('versions', v.id);
+  await db.delete('designs', id);
 }
 
 export async function putImage(db, id, blob) {
@@ -161,6 +168,46 @@ export async function setFavorite(db, id, on) {
   return favs;
 }
 
+// ── Restore points (version history) ─────────────────────────────────────
+// A row: { id, designId, createdAt, pageCount, doc }. The newest 30 are kept
+// per design. Backups don't include these, to keep them a sensible size.
+
+export async function putVersion(db, designId, doc) {
+  const row = { id: uid(), designId, createdAt: Date.now(), pageCount: doc.pages.length, doc: structuredClone(doc) };
+  await db.put('versions', row);
+  await pruneVersions(db, designId);
+  return row;
+}
+
+export async function listVersions(db, designId) {
+  const rows = await db.getAllFromIndex('versions', 'designId', designId);
+  return rows.sort((a, b) => b.createdAt - a.createdAt); // newest first
+}
+
+export async function pruneVersions(db, designId, keep = 30) {
+  const rows = await listVersions(db, designId);
+  for (const row of rows.slice(keep)) await db.delete('versions', row.id);
+}
+
+// Everything the backup file needs, one row list per store.
+export async function exportAll(db) {
+  return {
+    designs: await db.getAll('designs'),
+    images: await db.getAll('images'),
+    assets: await db.getAll('assets'),
+    components: await db.getAll('components'),
+    favorites: [...(await getFavorites(db))],
+  };
+}
+
+export async function importRows(db, rows) {
+  for (const d of rows.designs || []) await db.put('designs', d);
+  for (const i of rows.images || []) await db.put('images', i);
+  for (const a of rows.assets || []) await db.put('assets', a);
+  for (const c of rows.components || []) await db.put('components', c);
+  if (rows.favorites) await db.put('prefs', rows.favorites, 'favorites');
+}
+
 // The 800 ms debounced autosave. Returns a { schedule, cancel, flush } object
 // that owns its own timer; the app feeds it each new document state.
 export function createAutoSaver(save) {
@@ -187,6 +234,14 @@ export function createAutoSaver(save) {
       if (timer) clearTimeout(timer);
       timer = null;
       pending = null;
+    },
+    // Save the pending document at once: on switching away from the tab or
+    // closing it, there is no 800 ms to wait for.
+    flush() {
+      if (!timer) return pending ? run() : Promise.resolve();
+      clearTimeout(timer);
+      timer = null;
+      return run();
     },
   };
 }

@@ -2,7 +2,7 @@
 // cleaning, imports and inserting library items.
 
 import { describe, it, expect } from 'vitest';
-import { ASSETS, LICENSES, SOURCES, searchLibrary, attributionOf, categoriesOf } from '../web/src/assets/catalog.js';
+import { ASSETS, LICENSES, SOURCES, LIBRARIES, searchLibrary, attributionOf, categoriesOf } from '../web/src/assets/catalog.js';
 import { TEMPLATES, TEMPLATE_CATEGORIES, instantiateTemplate } from '../web/src/assets/templates.js';
 import { BUNDLED_FONTS, fontStack, fontsUsed } from '../web/src/assets/fonts.js';
 import { sanitizeSvg, svgSize, svgDataUrl, isRecolorable, iconSvg } from '../web/src/assets/svg.js';
@@ -157,7 +157,7 @@ describe('imports', () => {
     expect(classifyFile(file('a.svg', ''))).toBe('svg');
     expect(classifyFile(file('a.woff2', ''))).toBe('font');
     expect(classifyFile(file('a.OTF', 'font/otf'))).toBe('font');
-    expect(classifyFile(file('a.pdf', 'application/pdf'))).toBe(null);
+    expect(classifyFile(file('a.pdf', 'application/pdf'))).toBe('pdf'); // PDFs are classified now, not rejected blindly
   });
 
   it('turns each kind into a library asset', async () => {
@@ -204,5 +204,27 @@ describe('inserting library items', () => {
 
   it('fits imports inside the page', () => {
     expect(placeOnPage(page, 4000, 1000, 0.5)).toEqual({ x: 250, y: 188, w: 500, h: 125 });
+  });
+});
+
+// The libraries this build adds, and the new file kinds imports know.
+describe('libraries and import kinds', () => {
+  it('credits every added library, under a licence in LICENSES', async () => {
+    const fs = await import('node:fs');
+    for (const lib of LIBRARIES) {
+      expect(Object.keys(LICENSES), lib.package).toContain(lib.license);
+      const meta = JSON.parse(fs.readFileSync(`node_modules/${lib.package}/package.json`, 'utf8'));
+      expect(meta.license, lib.package).toBe(lib.license);
+      expect(pkg.dependencies[lib.package] || pkg.devDependencies[lib.package], lib.package).toBeTruthy();
+    }
+  });
+
+  it('sorts project files, backups, PDFs and new image types', () => {
+    expect(classifyFile(file('poster.homestudio', ''))).toBe('project');
+    expect(classifyFile(file('all.homestudio-backup', ''))).toBe('backup');
+    expect(classifyFile(file('doc.pdf', 'application/pdf'))).toBe('pdf');
+    expect(classifyFile(file('photo.heic', 'image/heic'))).toBe('heic');
+    expect(classifyFile(file('new.avif', 'image/avif'))).toBe('image');
+    expect(classifyFile(file('scan.bmp', 'image/bmp'))).toBe('image');
   });
 });

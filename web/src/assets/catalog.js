@@ -18,7 +18,17 @@ export const LICENSES = {
   'CC0-1.0': { name: 'CC0 1.0 (public domain)', url: 'https://creativecommons.org/publicdomain/zero/1.0/' },
   ISC: { name: 'ISC License', url: 'https://opensource.org/license/isc-license-txt' },
   'OFL-1.1': { name: 'SIL Open Font License 1.1', url: 'https://openfontlicense.org' },
+  MIT: { name: 'MIT License', url: 'https://opensource.org/license/mit' },
+  'Apache-2.0': { name: 'Apache License 2.0', url: 'https://opensource.org/license/apache-2-0' },
 };
+
+// The open-source libraries this build adds, each checked by tests against
+// the licence its own package.json declares. Export and project files use
+// them; nothing here is bundled into the editor's UI.
+export const LIBRARIES = [
+  { package: 'fflate', license: 'MIT', source: 'https://github.com/101arrowz/fflate', attribution: 'fflate contributors, MIT', usedFor: 'ZIP files for exports, project files and backups' },
+  { package: 'pdf-lib', license: 'MIT', source: 'https://github.com/Hopding/pdf-lib', attribution: 'Andrew Dillon and pdf-lib contributors, MIT', usedFor: 'writing PDF exports' },
+];
 
 // Who made what. Home Studio's own drawings are dedicated to the public domain.
 export const SOURCES = {

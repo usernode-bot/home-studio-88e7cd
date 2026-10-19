@@ -53,6 +53,35 @@ no accounts, no network features, no paid anything.
 - **Undo, redo, autosave.** One history entry per finished gesture; designs
   autosave to IndexedDB on this device about a second after each change.
 
+## Getting work out (and back in)
+
+- **Export.** The Export button opens a dialog with format (PNG, JPEG, SVG,
+  PDF), page choice (this page or all pages), size (1×–4×, capped at what
+  browsers can draw), JPEG quality, an optional transparent background for
+  PNG and SVG, and DPI with printed size for PDF. Every file is verified
+  (signature, size, decode) before it downloads; several pages of one raster
+  or SVG format arrive as one ZIP. No watermarks, no limits.
+- **Project files.** Download a design as a `.homestudio` file (a ZIP with
+  the design and its images and fonts) from the designs sheet; import it on
+  any device to get an editable copy with fresh ids. Importing an image or
+  SVG makes a new design at the picture's size; project and backup files
+  are recognised by their contents, never by extension alone.
+- **Backups.** "Back up everything" writes one `.homestudio-backup` file
+  with all designs, images, fonts and favourites; restoring it adds
+  anything the device is missing and copies (never overwrites) designs that
+  differ — identical ones are skipped, nothing is deleted.
+- **Version history.** The clock button lists restore points: one kept
+  every 5 minutes while you edit (30 per design) and one taken before any
+  restore, so a restore can itself be undone by restoring forward.
+- **Crash recovery.** The app marks each session; if it was closed without
+  saving cleanly, the next visit reopens the design from its last autosave
+  and says so.
+- **Storage.** The designs sheet shows how much space the browser allows
+  and offers "Keep my designs" (persistent storage) when it's on offer.
+- **Offline.** After one visit, the app's own code is cached by a service
+  worker and the app opens offline; your designs stay in IndexedDB. It
+  never caches anything from `/api/` and works fine without the worker.
+
 ## Architecture
 
 React 18 and Vite 5, plain JavaScript, Tailwind 3 for styling. The canvas is
@@ -72,9 +101,14 @@ div), so the selection handles and guides need no rendering library.
 | `web/src/render/Canvas.jsx` | The page, selection frame and handles, guides, and every pointer gesture |
 | `web/src/render/ElementView.jsx` | Draws one element with all its styles; memoised so an edit redraws only what changed |
 | `web/src/render/PagePreview.jsx` | Library previews, drawn only once scrolled into view |
-| `web/src/ui/` | `App.jsx` (shell, toolbar, page tabs, shortcuts, autosave wiring, states), `panels.jsx` (layers, inspector), `styleControls.jsx` (inspector style sections), `Library.jsx` (its own lazily loaded chunk), `dialogs.jsx`, `icons.jsx` |
-| `web/src/persist/db.js` | IndexedDB stores (`designs`, `images` as Blobs, `assets` for imports, `components`, `prefs` for favourites), duplication, the 800 ms debounced autosave |
-| `web/src/demo.js` | Staging demo designs (`?demo=1` on staging only, separate `home-studio-demo` database) |
+| `web/src/ui/` | `App.jsx` (shell, toolbar, page tabs, shortcuts, autosave wiring, import, backup, restore points, states), `panels.jsx` (layers, inspector), `styleControls.jsx` (inspector style sections), `Library.jsx` (its own lazily loaded chunk), `ExportDialog.jsx` (lazy), `dialogs.jsx` (designs sheet, version history), `icons.jsx` |
+| `web/src/export/` | `svgPage.js` (the one page → SVG serialiser), `textLayout.js` (the wrap rule shared with the editor), `raster.js` (SVG → PNG/JPEG with size caps), `pdf.js` (PDF via pdf-lib), `verify.js` (byte and decode checks), `fontsInline.js` (@font-face embedding), `index.js` (`runExport`, file naming, ZIPs) |
+| `web/src/project/format.js` | `.homestudio` project files and `.homestudio-backup` backups (ZIPs via fflate), with versioned JSON and the restore rules |
+| `web/src/doc/validate.js` | `normalizeDesign`: sanitises any design read from disk or a file before it enters the store |
+| `web/src/persist/db.js` | IndexedDB stores (`designs`, `images` as Blobs, `assets` for imports, `components`, `prefs` for favourites, `versions` for restore points), duplication, the 800 ms debounced autosave, whole-library export/import |
+| `web/src/offline/` | `register.js` registers the service worker in production builds |
+| `web/sw.js` | The service worker; `vite.config.js` injects the precache list of built assets at build time |
+| `web/src/demo.js` | Staging demo designs (`?demo=1` on staging only, separate `home-studio-demo` database), including sample restore points |
 
 Document model: a design has pages; a page has `elements` (bottom first) and
 `guides`. An element has id, type (text, rect, ellipse, line, shape, image, svg, group),
@@ -86,7 +120,7 @@ their children with coordinates relative to the group's own origin.
 ```sh
 npm install
 npm run build   # vite build → dist/
-npm test        # vitest: model, history, snapping, alignment, shortcuts, styles, assets, storage
+npm test        # vitest: model, history, snapping, alignment, shortcuts, styles, assets, storage, export, project files
 npm start       # serves dist/ (the built app) on :3000
 ```
 
@@ -109,6 +143,7 @@ All dependencies are permissively licensed: react and react-dom (MIT),
 vite and @vitejs/plugin-react (MIT), idb (ISC), vitest (MIT), tailwindcss,
 postcss and autoprefixer (MIT), express (MIT), pg (MIT), jsonwebtoken (MIT),
 lucide (ISC), the @fontsource packages (OFL 1.1), fake-indexeddb (Apache 2.0,
-tests only).
+tests only), fflate (MIT) and pdf-lib (MIT), both recorded with their
+licences in `web/src/assets/catalog.js` `LIBRARIES`.
 This app is free and open source; no paid features, no watermarks, no
 artificial quotas, no mandatory accounts.

@@ -1,9 +1,11 @@
-// The two dialogs: the new-design dialog and the designs sheet.
+// The three dialogs: the new-design dialog, the designs sheet (with import,
+// download and backup) and version history.
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { pageIsValid } from '../doc/model.js';
 import { icons } from './icons.jsx';
 import { SIZE_PRESETS } from '../assets/presets.js';
+import PagePreview from '../render/PagePreview.jsx';
 
 function timeAgo(ts) {
   const s = Math.max(1, Math.round((Date.now() - ts) / 1000));
@@ -79,15 +81,22 @@ export function NewDesignDialog({ onCreate, onCancel, onTemplates }) {
   );
 }
 
-export function DesignsSheet({ designs, currentId, onOpen, onNew, onDelete, onRename, onDuplicate, onClose }) {
+export function DesignsSheet({ designs, currentId, onOpen, onNew, onDelete, onRename, onDuplicate, onDownload, onImport, onBackup, onRestoreBackup, storage, onClose }) {
   const [renaming, setRenaming] = useState(null);
+  const importRef = React.useRef(null);
+  const backupRef = React.useRef(null);
   return (
     <Scrim onClose={onClose} labelledBy="designs-title">
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
         <h2 className="text-heading" id="designs-title" style={{ flex: 1 }}>Designs on this device</h2>
         <button className="btn-secondary" onClick={onClose} aria-label="Close">Close</button>
       </div>
-      <button className="btn-primary" style={{ width: '100%', marginBottom: 12 }} onClick={onNew}>New design</button>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        <button className="btn-primary" style={{ flex: 1 }} onClick={onNew}>New design</button>
+        <button className="btn-secondary" style={{ flex: 1 }} onClick={() => importRef.current && importRef.current.click()} data-import-file>Import a file</button>
+        <input ref={importRef} type="file" hidden accept=".homestudio,.homestudio-backup,.zip,image/png,image/jpeg,image/gif,image/webp,image/avif,image/bmp,image/svg+xml,.svg"
+          onChange={(e) => { const f = [...(e.target.files || [])]; e.target.value = ''; if (f.length) onImport(f); }} />
+      </div>
       <ul className="list" data-designs>
         {designs.map((d) => (
           <li key={d.id} className={'list-row' + (d.id === currentId ? ' on' : '')}>
@@ -111,6 +120,10 @@ export function DesignsSheet({ designs, currentId, onOpen, onNew, onDelete, onRe
                   onClick={() => onDuplicate(d.id)}>
                   {icons.copy({ width: 18, height: 18 })}
                 </button>
+                <button className="btn-secondary" style={{ minHeight: 44, minWidth: 44 }} aria-label={'Download ' + d.name} data-download-design
+                  onClick={() => onDownload(d.id)}>
+                  {icons.download({ width: 18, height: 18 })}
+                </button>
                 <button className="btn-secondary" style={{ minHeight: 44, minWidth: 44 }} aria-label={'Delete ' + d.name}
                   onClick={() => onDelete(d.id)}>
                   {icons.trash({ width: 18, height: 18 })}
@@ -119,6 +132,62 @@ export function DesignsSheet({ designs, currentId, onOpen, onNew, onDelete, onRe
             )}
           </li>
         ))}
+      </ul>
+      <div style={{ marginTop: 16 }} data-backup>
+        <span className="section-label" style={{ display: 'block' }}>Backup</span>
+        <p className="sub" style={{ marginBottom: 4 }}>
+          {storage && storage.text ? storage.text : 'Designs are kept on this device, in this browser.'}
+        </p>
+        {storage && storage.fraction != null && (
+          <div className="meter" role="img" aria-label={'Storage used: ' + Math.round(storage.fraction * 100) + '%'}>
+            <i style={{ width: Math.max(2, Math.round(storage.fraction * 100)) + '%' }} />
+          </div>
+        )}
+        {storage && !storage.persisted && (
+          <button className="btn-secondary" style={{ marginBottom: 8 }} onClick={storage.onPersist}>Keep my designs</button>
+        )}
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button className="btn-secondary" style={{ flex: 1 }} onClick={onBackup}>Back up everything</button>
+          <button className="btn-secondary" style={{ flex: 1 }} onClick={() => backupRef.current && backupRef.current.click()}>Restore from a backup</button>
+          <input ref={backupRef} type="file" hidden accept=".homestudio-backup,.zip"
+            onChange={(e) => { const f = e.target.files && e.target.files[0]; e.target.value = ''; if (f) onRestoreBackup(f); }} />
+        </div>
+      </div>
+    </Scrim>
+  );
+}
+
+// Version history: the restore points of the open design, newest first,
+// each with a picture of its first page and a Restore button. "Now" leads.
+export function VersionHistoryDialog({ design, versions, images, onRestore, onClose }) {
+  return (
+    <Scrim onClose={onClose} labelledBy="history-title">
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+        <h2 className="text-heading" id="history-title" style={{ flex: 1 }}>Version history</h2>
+        <button className="btn-secondary" onClick={onClose} aria-label="Close">Close</button>
+      </div>
+      <p className="sub" style={{ marginBottom: 12 }}>Restore points of this design, kept on this device. One is kept every 5 minutes while you edit.</p>
+      <ul className="list" data-versions>
+        <li className="list-row on">
+          <PagePreview page={design.pages[0]} width={48} images={images} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <span style={{ display: 'block' }}>Now</span>
+            <span className="sub" style={{ display: 'block' }}>{design.pages.length} {design.pages.length === 1 ? 'page' : 'pages'}</span>
+          </div>
+        </li>
+        {versions.map((v) => (
+          <li key={v.id} className="list-row">
+            {v.doc.pages[0] && <PagePreview page={v.doc.pages[0]} width={48} images={images} />}
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: 'block' }}>{new Date(v.createdAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+              <span className="sub" style={{ display: 'block' }}>{v.pageCount} {v.pageCount === 1 ? 'page' : 'pages'}</span>
+            </div>
+            <button className="btn-secondary" onClick={() => onRestore(v)}>Restore</button>
+          </li>
+        ))}
+        {!versions.length && (
+          <li className="list-row"><span className="sub">No restore points yet. One is kept every 5 minutes while you edit.</span></li>
+        )}
       </ul>
     </Scrim>
   );

@@ -7,6 +7,7 @@ import { openDB } from 'idb';
 import {
   openDesignsDb, putDesign, getDesign, listDesigns, putImage, getImage, duplicateDesign, putAsset, listAssets,
   deleteAsset, getFavorites, setFavorite, saveComponent, listComponents, componentElements, deleteComponent,
+  createAutoSaver, putVersion, listVersions, deleteDesign,
 } from '../web/src/persist/db.js';
 import { newDesign, newElement, walk } from '../web/src/doc/model.js';
 import { instantiateTemplate, TEMPLATES } from '../web/src/assets/templates.js';
@@ -31,7 +32,7 @@ describe('database', () => {
     v1.close();
     const db = await openDesignsDb(false, name);
     expect((await listDesigns(db)).map((d) => d.name)).toEqual(['Old']);
-    expect([...db.objectStoreNames].sort()).toEqual(['assets', 'components', 'designs', 'images', 'prefs']);
+    expect([...db.objectStoreNames].sort()).toEqual(['assets', 'components', 'designs', 'images', 'prefs', 'versions']);
   });
 
   it('duplicates a design with new ids and its own image copies', async () => {
@@ -110,5 +111,64 @@ describe('database', () => {
     expect(await listComponents(db)).toEqual([]);
     expect(await getImage(db, savedImage)).toBe(null);
     expect(await getImage(db, placed[1].imageId)).toBeTruthy(); // placed copies stay
+  });
+});
+
+// Version 3: restore points, the delete order fix, and the autosaver's flush.
+describe('restore points and flush', () => {
+  it('upgrades a version-2 database without losing designs', async () => {
+    const name = 'upgrade2-' + n++;
+    const v2 = await openDB(name, 2, { upgrade(db2) {
+      for (const s of ['designs', 'images', 'assets', 'components']) db2.createObjectStore(s, { keyPath: 'id' });
+      db2.createObjectStore('prefs');
+    } });
+    await v2.put('designs', newDesign('Old', 100, 100));
+    v2.close();
+    const db = await openDesignsDb(false, name);
+    expect((await listDesigns(db)).map((d) => d.name)).toEqual(['Old']);
+    expect([...db.objectStoreNames]).toContain('versions');
+  });
+
+  it('lists restore points newest first and prunes to 30', async () => {
+    const db = await freshDb();
+    const d = newDesign('V', 100, 100);
+    await putDesign(db, d);
+    const rows = [];
+    for (let i = 0; i < 35; i++) {
+      const clone = structuredClone(d);
+      clone.pages[0].elements.push(newElement('rect', { x: i, y: 0, w: 10, h: 10 }));
+      rows.push(await putVersion(db, d.id, clone));
+      rows[rows.length - 1].createdAt = 1000 + i;
+      await db.put('versions', rows[rows.length - 1]);
+    }
+    const list = await listVersions(db, d.id);
+    expect(list).toHaveLength(30);
+    expect(list[0].createdAt).toBeGreaterThan(list[1].createdAt);
+  });
+
+  it('deleting a design removes its images and its restore points', async () => {
+    const db = await freshDb();
+    const d = designWithImage();
+    await putDesign(db, d);
+    await putImage(db, 'img-1', blob('one'));
+    await putImage(db, 'img-2', blob('two'));
+    await putVersion(db, d.id, d);
+    await deleteDesign(db, d.id);
+    expect(await getDesign(db, d.id)).toBe(undefined);
+    expect(await getImage(db, 'img-1')).toBe(null);
+    expect(await getImage(db, 'img-2')).toBe(null);
+    expect(await listVersions(db, d.id)).toEqual([]);
+  });
+
+  it('flush saves the pending design at once', async () => {
+    const db = await freshDb();
+    const saved = [];
+    const saver = createAutoSaver(async (doc) => saved.push(doc));
+    const d = newDesign('F', 100, 100);
+    saver.schedule(d);
+    expect(saved).toHaveLength(0);
+    await saver.flush();
+    expect(saved).toHaveLength(1);
+    expect(saved[0].name).toBe('F');
   });
 });

@@ -58,31 +58,15 @@ of this applies.
 
 ## Starter template
 
-The screen this app currently ships — the "Starter template" hero with
-the app's thumbnail tile and the plain-English note on how the app gets
-built (by asking Homeroom bot) — is placeholder content from the
-Homeroom starter template, not product intent.
-
-When the user asks for their first real feature, REPLACE the template
-screen rather than building alongside it:
-
-- remove the `usernode-starter-notice@1` block in `public/index.html`
-  (both sentinel comments and everything between them),
-- rewrite `README.md` to describe the actual app.
-
-Keep the `usernode-dev-console@1` forwarder `<script>` when rewriting the
-HTML — that block is platform infrastructure, not template content. So is
-the bridge `<script>`. The design kit is not placeholder either: build the
-real app with it, and fill in "## Design" below.
-
-The screen has a light and a dark look and follows the viewer's Homeroom
-theme, switching live when they change it: the theme `<script>` right after
-the bridge tag sets a `dark` class on `<html>`. Keep that script, and give
-everything you build both looks (the design kit's colour tokens carry both), unless one
-fixed look is the point of this app, like a game's own scene; then say so
-under "## Design" below. Unless a request asks for one, add
-no theme picker: the viewer's Homeroom setting is the control. "The
-platform's light/dark theme inside the app frame" in the platform
+The starter template screen was replaced by the real app in Phase 1. Two
+blocks in `web/index.html` are platform infrastructure, not app content —
+never remove them: the bridge `<script>`, the theme `<script>` right after
+it (it sets a `dark` class on `<html>`), and the `usernode-dev-console@1`
+forwarder `<script>`. The app has a light and a dark look and follows the
+viewer's Homeroom theme, switching live when they change it; give
+everything both looks (the design kit's colour tokens carry both). No
+theme picker in the app: the viewer's Homeroom setting is the control.
+"The platform's light/dark theme inside the app frame" in the platform
 conventions has the details.
 
 If a rule below this line conflicts with the hosted conventions, the
@@ -98,9 +82,11 @@ tables you've marked private), etc.
 A free, open-source graphic design editor that runs entirely in the browser.
 People make a design at a size they set, add text, shapes and images, then
 move, resize, rotate, align and group them, across pages, with undo and
-autosave to their own device (IndexedDB only). Phase 1 is the core editor:
-exporting, templates, sharing and sync come in later phases. No accounts,
-no network features, no paid anything.
+autosave to their own device (IndexedDB only). Phase 3 adds exports
+(PNG, JPEG, SVG, PDF), project files and backups, version history with
+restore points, crash recovery, storage warnings and offline support.
+Sharing and sync come in later phases. No accounts, no network features,
+no paid anything.
 
 ## Design
 
@@ -140,14 +126,41 @@ the way design tools have long marked guides.
   `strokeStyle`, text effects, image `crop`/`mask`/`adjust`), so older
   designs render unchanged; `doc/style.js` turns them into CSS.
 - Bundle only assets under a licence listed in `assets/catalog.js`
-  `LICENSES` (CC0, ISC, OFL today), each with its source and attribution;
-  `tests/assets.test.js` checks every item. Home Studio's own drawings are CC0.
+  `LICENSES` (CC0, ISC, OFL, MIT, Apache-2.0 today), each with its source
+  and attribution; `tests/assets.test.js` checks every item, including the
+  npm libraries in `LIBRARIES` (fflate for ZIPs, pdf-lib for PDFs). Home
+  Studio's own drawings are CC0. Don't add a bundled library without
+  putting it in `LIBRARIES` with its licence.
 - Imported files, components and favourites live in the `assets`,
   `components` and `prefs` stores. Anything placed on a page gets its own
   copy of its image blob, so deleting a design never breaks the library or
   another design.
 - The library is its own lazily loaded chunk, and bundled fonts load only
-  when something uses them; keep both that way.
+  when something uses them; keep both that way. The export dialog and its
+  pdf-lib dependency are lazy too.
+- Every export goes through the one SVG serialiser (`export/svgPage.js`),
+  which the editor's text wrapping shares (`export/textLayout.js`), so what
+  you see is what exports. `runExport` verifies every produced file
+  (signature, size, decode) before anything downloads — keep that rule: a
+  file that fails verification never reaches the user. The editor's own
+  canvas rendering never reuses export code paths.
+- Raster exports are capped at 16,777,216 px of area and a 16,384 px side
+  (`fitScale`) — what browsers can actually draw. PDF pages embed JPEGs at
+  the chosen DPI (96/150/300).
+- Project files (`.homestudio`) and backups (`.homestudio-backup`) are ZIPs
+  from `project/format.js` with `format`/`version` in their JSON. `version`
+  is `FORMAT_VERSION`; readers refuse anything newer with a plain message
+  rather than guessing. Importing a project or backup only ever adds or
+  copies — it never deletes or overwrites what's on the device, and ids are
+  rewritten on import.
+- Restore points live in the `versions` IndexedDB store (DB_VERSION 3, up
+  to 30 per design). One is snapshot before any restore, and one every 5
+  minutes while editing. Deleting a design deletes its versions.
+- The service worker (`web/sw.js`, built by the vite plugin in
+  `vite.config.js`) never intercepts `/api/*` or non-GET requests, and
+  never caches user data — it precaches built assets only, serves the
+  `/__shell` fallback for offline navigations, and is registered only in
+  production builds.
 
 The kit is in `styles/tailwind-input.css`: colour tokens with a light and
 a dark value (named in `tailwind.config.js`), and a few components
@@ -174,9 +187,3 @@ Re-theme by changing the token values there, keeping every text pair at
 - A header that shows the app's own mark shows the project's icon there
   (the emoji in `dapp.json`'s `icon` block) or no mark at all: never an
   empty tile, and never `brand/icon.png`, which the app does not serve.
-
-## App-specific conventions
-
-_(optional — e.g. "all currency values stored as integer cents, not
-floats"; "the `posts` table is append-only"; "avoid adding new
-dependencies"; etc.)_

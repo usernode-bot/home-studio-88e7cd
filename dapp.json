@@ -13,6 +13,9 @@
     { "path": "/?demo=1", "expectSelector": "[data-layers] li" },
     { "name": "Demo poster draws an SVG icon and a star shape", "path": "/?demo=1", "expectSelector": ".art [data-el=\"d-icon\"] img[src^=\"data:image/svg+xml\"]" },
     { "name": "Library opens on its templates", "path": "/?demo=1#library", "expectText": "Garden party invitation" },
-    { "name": "Library opens with no designs yet", "path": "/#library", "expectSelector": "[data-library] [data-item=\"tpl:quote-post\"] .preview > div:not(.skeleton)" }
+    { "name": "Library opens with no designs yet", "path": "/#library", "expectSelector": "[data-library] [data-item=\"tpl:quote-post\"] .preview > div:not(.skeleton)" },
+    { "name": "Export button is in the top bar", "path": "/?demo=1", "expectSelector": "[data-export]" },
+    { "name": "Export dialog opens with a Download PNG button", "path": "/?demo=1#export", "expectText": "Download PNG" },
+    { "name": "Version history lists restore points", "path": "/?demo=1#history", "expectSelector": "[data-versions] li" }
   ]
 }

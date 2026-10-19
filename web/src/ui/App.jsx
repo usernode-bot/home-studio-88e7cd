@@ -5,7 +5,7 @@
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import Canvas from '../render/Canvas.jsx';
 import { LayersPanel, Inspector } from './panels.jsx';
-import { NewDesignDialog, DesignsSheet } from './dialogs.jsx';
+import { NewDesignDialog, DesignsSheet, VersionHistoryDialog } from './dialogs.jsx';
 import { icons } from './icons.jsx';
 import {
   docReducer, initialDocState, pageOf, addElements, moveElements, removeElements, updateElements,
@@ -15,8 +15,9 @@ import { newDesign, newElement, uid, measureTextHeight, imageIdsIn, unionBoxes, 
 import {
   openDesignsDb, listDesigns, putDesign, deleteDesign, putImage, getImage, createAutoSaver, duplicateDesign,
   listAssets, putAsset, deleteAsset, getFavorites, setFavorite, listComponents, saveComponent, deleteComponent,
-  componentElements,
+  componentElements, putVersion, listVersions,
 } from '../persist/db.js';
+import { writeProject, readProject, writeBackup, restoreBackup } from '../project/format.js';
 import { ensureFont, fontsUsed, registerUserFont, forgetUserFont } from '../assets/fonts.js';
 import {
   assetFromFile, classifyFile, elementForItem, applyBackground, placeOnPage,
@@ -35,9 +36,12 @@ const TOOLS = [
 // The library is its own chunk: its catalog, templates and previews load
 // the first time someone opens it.
 const Library = lazy(() => import('./Library.jsx'));
+const ExportDialog = lazy(() => import('./ExportDialog.jsx'));
 const loadTemplates = () => import('../assets/templates.js');
 
 const isLibraryHash = () => /^#library\b/.test(window.location.hash);
+const isExportHash = () => /^#export\b/.test(window.location.hash);
+const isHistoryHash = () => /^#history\b/.test(window.location.hash);
 
 // Browser checks for imported files.
 const importChecks = {
@@ -69,6 +73,12 @@ export default function App() {
   const [uploads, setUploads] = useState([]);
   const [components, setComponents] = useState([]);
   const [importError, setImportError] = useState('');
+  const [exportOpen, setExportOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [versions, setVersions] = useState([]);
+  const [note, setNote] = useState(''); // recovery / storage / save-failed notes
+  const [storage, setStorage] = useState(null); // { text, fraction, persisted, onPersist }
+  const lastVersionAt = useRef(0);
   const apiRef = useRef(null);
   const fileRef = useRef(null);
   const dbLive = useRef(null);
@@ -93,6 +103,14 @@ export default function App() {
     setImages(map);
     dispatch({ type: 'load', doc: design, selection: opts.selection || [] });
     setPhase('ready');
+    void listVersions(dbLive.current, design.id).then((rows) => setVersions(rows)).catch(() => setVersions([]));
+    // Deep links into the export dialog and version history, like #library.
+    for (const [is, set] of [[isExportHash, setExportOpen], [isHistoryHash, setHistoryOpen]]) {
+      if (is()) {
+        set(true);
+        window.history.replaceState(null, '', window.location.pathname + window.location.search);
+      }
+    }
   }, []);
 
   const refreshList = useCallback(async () => {
@@ -131,6 +149,20 @@ export default function App() {
       setDesigns(list);
       setDbBroken(false);
       await refreshLibrary().catch(() => {});
+      if (useDemo) {
+        // The demo seeds a few obviously sample restore points, so Version
+        // history can be seen populated.
+        const poster = list.find((d) => d.name === 'Garden supper poster');
+        if (poster && !(await listVersions(db, poster.id)).length) {
+          for (const [mins, pageOf] of [[50, 1], [25, 2], [5, 3]]) {
+            const clone = structuredClone(poster);
+            clone.pages = clone.pages.slice(0, pageOf);
+            clone.updatedAt = Date.now() - mins * 60 * 1000;
+            const row = { id: `demo-${mins}`, designId: poster.id, createdAt: clone.updatedAt, pageCount: pageOf, doc: clone };
+            await db.put('versions', row);
+          }
+        }
+      }
       if (list.length) {
         const wantDemoSelection = useDemo && list[0].pages[0]?.elements.some((e) => e.id === 'd-block');
         await open(list[0], { selection: wantDemoSelection ? ['d-block'] : [] });
@@ -165,6 +197,75 @@ export default function App() {
     setSaveState('saving');
     autoSaver.schedule(state.doc);
   }, [state.doc, phase, autoSaver]);
+
+  // ── Restore points: every 5 minutes of editing, on switching designs,
+  // and just before a restore. The newest 30 are kept per design. ────────
+  useEffect(() => {
+    if (phase !== 'ready' || !state.doc || !dbLive.current) return;
+    const t = setInterval(() => {
+      const d = stateRef.current.doc;
+      if (!d) return;
+      if (Date.now() - lastVersionAt.current > 5 * 60 * 1000) {
+        lastVersionAt.current = Date.now();
+        putVersion(dbLive.current, d.id, d).then((row) => setVersions((v) => [row, ...v].slice(0, 30)))
+          .catch(() => {});
+      }
+    }, 30000);
+    return () => clearInterval(t);
+  }, [phase]);
+
+  // ── Crash recovery: a session marker says whether the last close was
+  // clean. Changes flush the moment the tab hides or the page closes. ─────
+  useEffect(() => {
+    const key = 'home-studio:session';
+    let last = null;
+    try { last = JSON.parse(localStorage.getItem(key)); } catch { /* no marker yet */ }
+    if (last && last.clean === false && last.designId) {
+      const again = designs.find((d) => d.id === last.designId);
+      if (again) setNote(`Home Studio closed unexpectedly last time. "${again.name}" was reopened from its last autosave.`);
+    }
+    try { localStorage.setItem(key, JSON.stringify({ designId: stateRef.current.doc ? stateRef.current.doc.id : null, clean: false })); } catch { /* ignore */ }
+    const setClean = () => {
+      try {
+        const d = stateRef.current.doc;
+        localStorage.setItem(key, JSON.stringify({ designId: d ? d.id : null, clean: true }));
+      } catch { /* ignore */ }
+      autoSaver.flush().catch(() => {});
+    };
+    const setUnclean = () => {
+      try { localStorage.setItem(key, JSON.stringify({ designId: stateRef.current.doc ? stateRef.current.doc.id : null, clean: false })); } catch { /* ignore */ }
+    };
+    const onHide = () => (document.visibilityState === 'hidden' ? setClean() : setUnclean());
+    window.addEventListener('pagehide', setClean);
+    document.addEventListener('visibilitychange', onHide);
+    return () => {
+      window.removeEventListener('pagehide', setClean);
+      document.removeEventListener('visibilitychange', onHide);
+    };
+  }, [designs, autoSaver]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Storage: how much the designs use, whether the browser has
+  // promised to keep them, and a warning when 80% full. ───────────────────
+  const refreshStorage = useCallback(async () => {
+    try {
+      if (!navigator.storage || !navigator.storage.estimate) return;
+      const { usage = 0, quota = 0 } = await navigator.storage.estimate();
+      const persisted = navigator.storage.persisted ? await navigator.storage.persisted() : true;
+      const fraction = quota ? usage / quota : null;
+      const mb = Math.round(usage / (1024 * 1024));
+      const gb = Math.round(quota / (1024 * 1024 * 1024) * 10) / 10;
+      setStorage({
+        fraction, persisted,
+        text: `Designs use ${mb} MB of the ${gb} GB this browser allows. Kept until you remove them.`,
+        onPersist: async () => {
+          try { await navigator.storage.persist(); } catch { /* refused */ }
+          void refreshStorage();
+        },
+      });
+      if (fraction != null && fraction >= 0.8) setNote((n) => n || 'Storage is nearly full on this device. Back up your designs or delete ones you no longer need.');
+    } catch { /* no estimates here */ }
+  }, []);
+  useEffect(() => { void refreshStorage(); }, [refreshStorage, saveState]);
 
   // ── Designs: create, open, rename, delete ─────────────────────────────
   const createNew = useCallback(async ({ name, width, height }) => {
@@ -250,10 +351,121 @@ export default function App() {
   const onFile = useCallback(async (e) => {
     const files = [...(e.target.files || [])];
     e.target.value = '';
-    const usable = files.filter((f) => classifyFile(f) !== 'font');
-    if (files.length && !usable.length) showImportError('Fonts are imported from the library, under Your files.');
+    const usable = files.filter((f) => !['font', 'heic'].includes(classifyFile(f)));
+    if (files.some((f) => classifyFile(f) === 'font')) showImportError('Fonts are imported from the library, under Your files.');
+    if (files.some((f) => classifyFile(f) === 'heic')) showImportError("That HEIC photo can't be opened here. Most browsers can't read HEIC; save it as JPEG first.");
     if (usable.length) await importFiles(usable, true);
   }, [importFiles]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Import a file from the designs sheet: a project file comes back as a
+  // new design, a backup restores, an image or SVG opens as its own design.
+  const importFromSheet = useCallback(async (files) => {
+    for (const f of files) {
+      const kind = classifyFile(f);
+      try {
+        if (kind === 'project') {
+          const { design, putImage: imgs, putAsset: fonts } = await readProject(f, { imageSize: importChecks.imageSize });
+          for (const i of imgs) { try { if (dbLive.current) await putImage(dbLive.current, i.id, i.blob); } catch { /* shows until reload */ } }
+          for (const ft of fonts) {
+            const asset = { id: ft.id, kind: 'font', name: ft.name, createdAt: Date.now(), blob: ft.blob };
+            try { if (dbLive.current) await putAsset(dbLive.current, asset); } catch { /* still usable */ }
+            try { await registerUserFont(asset); } catch { /* fallback font */ }
+            const key = 'user:' + ft.id;
+            const remap = (els) => els.map((el) => {
+              if (el.font === ft.key) el.font = key;
+              if (el.children) remap(el.children);
+              return el;
+            });
+            for (const p of design.pages) remap(p.elements);
+          }
+          if (dbLive.current) await putDesign(dbLive.current, design);
+          await refreshList();
+          await open(design);
+          setSheet(false);
+          return;
+        }
+        if (kind === 'backup') {
+          if (!dbLive.current) throw new Error("Backups can't be restored on this device right now.");
+          const added = await restoreBackup(dbLive.current, f);
+          await refreshList();
+          await refreshLibrary().catch(() => {});
+          setImgError(`Restored: ${added.designs + added.restored} ${added.designs + added.restored === 1 ? 'design' : 'designs'} added, nothing replaced.`);
+          setTimeout(() => setImgError(''), 5000);
+          continue;
+        }
+        if (kind === 'pdf') {
+          showImportError('PDF pages can\'t be brought in yet in this browser. Export your design to PDF from the Export dialog.');
+          continue;
+        }
+        if (kind === 'image' || kind === 'svg') {
+          // A picture opens as its own design at the picture's size.
+          const asset = await assetFromFile(f, importChecks);
+          try { if (dbLive.current) await putAsset(dbLive.current, asset); } catch { /* still usable */ }
+          setUploads((list) => [asset, ...list]);
+          const w = Math.min(10000, Math.max(16, Math.round(asset.w || 800)));
+          const h = Math.min(10000, Math.max(16, Math.round(asset.h || 600)));
+          const d = newDesign(asset.name, w, h);
+          if (asset.blob) {
+            const id = uid();
+            try { if (dbLive.current) await putImage(dbLive.current, id, asset.blob); } catch { /* shows until reload */ }
+            setImages((m) => ({ ...m, [id]: URL.createObjectURL(asset.blob) }));
+            d.pages[0].elements.push(newElement('image', { x: 0, y: 0, w, h }, { imageId: id, natW: asset.w, natH: asset.h, name: asset.name }));
+          } else if (asset.svg) {
+            d.pages[0].elements.push(newElement('svg', { x: 0, y: 0, w, h }, { svg: asset.svg, name: asset.name }));
+          }
+          try { if (dbLive.current) await putDesign(dbLive.current, d); } catch { /* keep editing */ }
+          await refreshList();
+          await open(d);
+          setSheet(false);
+          return;
+        }
+        showImportError(`${f.name} isn't a project file, backup, image or SVG.`);
+      } catch (err) {
+        showImportError(err.message || "That file couldn't be imported.");
+      }
+    }
+  }, [open, refreshList]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Download a design as an editable project file (.homestudio).
+  const downloadDesign = useCallback(async (id) => {
+    try {
+      const d = stateRef.current.doc && stateRef.current.doc.id === id ? stateRef.current.doc : designs.find((x) => x.id === id);
+      if (!d || !dbLive.current) return;
+      const blob = await writeProject(dbLive.current, d);
+      const { downloadBlob } = await import('../export/index.js');
+      downloadBlob(blob, `${d.name.replace(/[\\/:*?"<>|#&]+/g, ' ').trim() || 'design'}.homestudio`);
+    } catch (err) {
+      showImportError(err.message || "The project file couldn't be written.");
+    }
+  }, [designs]);
+
+  const backupAll = useCallback(async () => {
+    if (!dbLive.current) { showImportError("Backups can't be written on this device right now."); return; }
+    try {
+      const blob = await writeBackup(dbLive.current);
+      const { downloadBlob } = await import('../export/index.js');
+      downloadBlob(blob, `Home Studio backup ${new Date().toISOString().slice(0, 10)}.homestudio-backup`);
+    } catch (err) {
+      showImportError(err.message || "The backup couldn't be written.");
+    }
+  }, []);
+
+  // Restore an older restore point. Undo takes you straight back.
+  const restoreVersion = useCallback(async (row) => {
+    const d = stateRef.current.doc;
+    if (!d || !dbLive.current) return;
+    try { await putVersion(dbLive.current, d.id, d); } catch { /* history best-effort */ }
+    apply(() => structuredClone(row.doc), true);
+    const ids = new Set();
+    for (const p of row.doc.pages) for (const id of imageIdsIn(p.elements)) ids.add(id);
+    const map = { ...images };
+    for (const id of ids) if (!map[id]) {
+      const blob = await getImage(dbLive.current, id);
+      if (blob) map[id] = URL.createObjectURL(blob);
+    }
+    setImages(map);
+    setHistoryOpen(false);
+  }, [apply, images]);
 
   const openLibrary = () => {
     if (!isLibraryHash()) window.location.hash = 'library';
@@ -264,7 +476,11 @@ export default function App() {
     if (isLibraryHash()) window.history.replaceState(null, '', window.location.pathname + window.location.search);
   }, []);
   useEffect(() => {
-    const onHash = () => setLibraryOpen(isLibraryHash());
+    const onHash = () => {
+      setLibraryOpen(isLibraryHash());
+      if (isExportHash()) { setExportOpen(true); window.history.replaceState(null, '', window.location.pathname + window.location.search); }
+      if (isHistoryHash()) { setHistoryOpen(true); window.history.replaceState(null, '', window.location.pathname + window.location.search); }
+    };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
@@ -533,7 +749,23 @@ export default function App() {
         <span style={{ flex: 1 }} />
         <button className="ib" aria-label="Undo" disabled={!state.past.length} onClick={() => dispatch({ type: 'undo' })}>{icons.undo({})}</button>
         <button className="ib" aria-label="Redo" disabled={!state.future.length} onClick={() => dispatch({ type: 'redo' })}>{icons.redo({})}</button>
+        <button className="ib" aria-label="Version history" title="Version history" data-history onClick={() => setHistoryOpen(true)}>{icons.history({})}</button>
+        <button className="btn-primary" data-export onClick={() => setExportOpen(true)}>Export</button>
       </div>
+      {note && (
+        <div className="notice" role="status" data-note>
+          <span style={{ flex: 1 }}>{note}</span>
+          {/unexpectedly/.test(note) && <button className="btn-secondary" onClick={() => setHistoryOpen(true)}>Version history</button>}
+          {/nearly full/.test(note) && <button className="btn-secondary" onClick={() => { setSheet(true); setNote(''); }}>Back up</button>}
+          {/aren't saved/.test(note) && (
+            <>
+              <button className="btn-secondary" onClick={() => stateRef.current.doc && downloadDesign(stateRef.current.doc.id)}>Download this design</button>
+              <button className="btn-secondary" onClick={() => { setSaveState('saving'); autoSaver.flush().catch(() => {}); }}>Retry</button>
+            </>
+          )}
+          <button className="btn-secondary" aria-label="Dismiss note" onClick={() => setNote('')}>Dismiss</button>
+        </div>
+      )}
       {dbBroken && (
         <div className="state-error" role="alert" style={{ borderBottom: '1px solid rgb(var(--line))' }}>
           <div>Designs can't be saved on this device right now. Editing still works without saving.</div>
@@ -606,14 +838,28 @@ export default function App() {
             onSaveComponent={saveAsComponent} />
         </div>
       )}
-      <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml,.svg" multiple hidden onChange={onFile} />
+      <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/avif,image/bmp,image/svg+xml,.svg" multiple hidden onChange={onFile} />
       {sheet && doc && (
         <DesignsSheet designs={designs} currentId={doc.id} onClose={() => setSheet(false)}
           onOpen={async (d) => { setSheet(false); await open(d); }}
           onNew={() => { setSheet(false); setNewDialog(true); }}
           onDelete={(id) => removeDesign(id).then(() => setSheet(false))}
           onRename={renameDesign}
-          onDuplicate={(id) => { setSheet(false); void copyDesign(id); }} />
+          onDuplicate={(id) => { setSheet(false); void copyDesign(id); }}
+          onDownload={(id) => void downloadDesign(id)}
+          onImport={(files) => void importFromSheet(files)}
+          onBackup={() => void backupAll()}
+          onRestoreBackup={(f) => void importFromSheet([f])}
+          storage={storage} />
+      )}
+      {historyOpen && doc && (
+        <VersionHistoryDialog design={doc} versions={versions} images={images}
+          onRestore={(v) => void restoreVersion(v)} onClose={() => setHistoryOpen(false)} />
+      )}
+      {exportOpen && doc && (
+        <Suspense fallback={<div className="dialog-scrim"><div className="dialog card" aria-busy="true"><div className="skeleton" style={{ height: 28, width: 120 }} /></div></div>}>
+          <ExportDialog design={doc} page={p2 || doc.pages[0]} images={images} onClose={() => setExportOpen(false)} />
+        </Suspense>
       )}
       {libraryOpen && (
         <Suspense fallback={<div className="dialog-scrim"><div className="dialog card lib" aria-busy="true"><div className="skeleton" style={{ height: 28, width: 120 }} /></div></div>}>

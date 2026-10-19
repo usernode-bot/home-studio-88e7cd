@@ -20,4 +20,6 @@ export const icons = {
   star: ({ fill, ...p }) => <Icon {...p}><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z" fill={fill || 'none'} /></Icon>,
   copy: (p) => <Icon {...p}><rect x="8" y="8" width="12" height="12" rx="2" /><path d="M16 8V5a1 1 0 00-1-1H5a1 1 0 00-1 1v10a1 1 0 001 1h3" /></Icon>,
   trash: (p) => <Icon {...p}><path d="M4 7h16M9 7V5h6v2M6 7l1 13h10l1-13" /></Icon>,
+  download: (p) => <Icon {...p}><path d="M12 4v11M7 10l5 5 5-5M5 20h14" /></Icon>,
+  history: (p) => <Icon {...p}><circle cx="12" cy="12" r="8" /><path d="M12 8v4l3 2" /></Icon>,
 };
