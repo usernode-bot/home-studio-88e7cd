@@ -336,7 +336,7 @@ export default function App() {
       <div className="top">
         <div>
           <h1><button className="title-btn" onClick={() => setSheet(true)} aria-label="Home Studio: open the designs on this device">Home Studio</button></h1>
-          <div className="sub">{doc ? `${doc.name}, ${statusText}` : 'Designs are saved on this device'}</div>
+          <div className="sub">{doc ? `${doc.name}, ${statusText}` : dbBroken ? 'Not saved' : 'Designs are saved on this device'}</div>
         </div>
         <span style={{ flex: 1 }} />
         <button className="ib" aria-label="Undo" disabled={!state.past.length} onClick={() => dispatch({ type: 'undo' })}>{icons.undo({})}</button>

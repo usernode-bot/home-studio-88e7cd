@@ -52,15 +52,15 @@
 
 .sep {width:1px;height:28px;background:rgb(var(--line));margin:0 4px}
 
-.btn-primary {display:inline-flex;min-height:44px;align-items:center;justify-content:center;gap:8px;padding:0 16px;border-radius:8px;background:rgb(var(--accent));color:rgb(var(--on-accent));font-weight:500;font-size:16px;border:0}
+.btn-primary {display:inline-flex;min-height:44px;align-items:center;justify-content:center;gap:8px;padding:0 16px;border-radius:8px;background:rgb(var(--accent));color:rgb(var(--on-accent));font-weight:500;font-size:16px;border:0;white-space:nowrap}
 
-.btn-secondary {display:inline-flex;min-height:44px;align-items:center;justify-content:center;padding:0 16px;border-radius:8px;border:1px solid rgb(var(--line));background:rgb(var(--surface));font-weight:500}
+.btn-secondary {display:inline-flex;min-height:44px;align-items:center;justify-content:center;padding:0 16px;border-radius:8px;border:1px solid rgb(var(--line));background:rgb(var(--surface));font-weight:500;white-space:nowrap}
 
-.pages {display:flex;gap:8px;padding:10px 16px;font-size:14px;line-height:20px;align-items:center;overflow-x:auto}
+.pages {display:flex;gap:8px;padding:10px 0 10px 16px;font-size:14px;line-height:20px;align-items:center;overflow-x:auto}
 
 .pg {padding:6px 12px;border-radius:8px;border:1px solid rgb(var(--line));background:rgb(var(--surface));display:inline-flex;align-items:center;min-height:44px;white-space:nowrap}
 
-.pages .sub {white-space:nowrap}
+.pages .sub {white-space:nowrap;margin-right:16px}
 
 .pg.on {border-color:rgb(var(--accent));color:rgb(var(--accent));font-weight:600}
 
@@ -153,6 +153,6 @@
   [data-spec-screen] { max-width: none; }
   .main { display: flex; flex: 1 1 auto; min-height: 0; }
   .panel.layers { order: 0; width: 260px; flex: none; border-right: 1px solid rgb(var(--line)); }
-  .panel.props { order: 2; width: 300px; flex: none; border-left: 1px solid rgb(var(--line)); overflow-y: auto; }
+  .panel.props { order: 2; width: 320px; flex: none; border-left: 1px solid rgb(var(--line)); overflow-y: auto; }
   .work { order: 1; flex: 1 1 auto; height: auto; min-width: 0; }
 }

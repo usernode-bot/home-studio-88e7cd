@@ -124,7 +124,7 @@ function reorderRow(page, apply) {
 
 // ── Properties inspector ─────────────────────────────────────────────────
 
-function NumField({ label, value, onCommit }) {
+function NumField({ label, value, onCommit, style }) {
   const [v, setV] = useState(value);
   useEffect(() => setV(value), [value]);
   const commit = () => {
@@ -133,7 +133,7 @@ function NumField({ label, value, onCommit }) {
     else setV(value);
   };
   return (
-    <label className="f">
+    <label className="f" style={style}>
       <b>{label}</b>
       <input className="num" inputMode="decimal" value={v}
         onChange={(e) => setV(e.target.value)}
@@ -242,14 +242,14 @@ export function Inspector({ state, dispatch, apply, page, onAddImage, imgError }
               <>
                 <ColorField label="Fill" value={one.fill} onCommit={(v) => setOne({ fill: v })} />
                 <ColorField label="Stroke" value={one.stroke || '#000000'} onCommit={(v) => setOne({ stroke: v, strokeWidth: one.strokeWidth || 1 })} />
-                <NumField label="Stroke width" value={one.strokeWidth || 0} onCommit={(v) => setOne({ strokeWidth: Math.max(0, v) })} />
+                <NumField label="Stroke width" style={{ gridColumn: 'span 2' }} value={one.strokeWidth || 0} onCommit={(v) => setOne({ strokeWidth: Math.max(0, v) })} />
                 {one.type === 'rect' && <NumField label="Corner" value={one.radius || 0} onCommit={(v) => setOne({ radius: Math.max(0, v) })} />}
               </>
             )}
             {one.type === 'line' && (
               <>
                 <ColorField label="Stroke" value={one.stroke} onCommit={(v) => setOne({ stroke: v })} />
-                <NumField label="Stroke width" value={one.strokeWidth || 0} onCommit={(v) => setOne({ strokeWidth: Math.max(1, v) })} />
+                <NumField label="Stroke width" style={{ gridColumn: 'span 2' }} value={one.strokeWidth || 0} onCommit={(v) => setOne({ strokeWidth: Math.max(1, v) })} />
               </>
             )}
             {one.type === 'text' && (
@@ -300,7 +300,7 @@ export function Inspector({ state, dispatch, apply, page, onAddImage, imgError }
       )}
       {imgError && <div className="sub" style={{ padding: '0 4px 8px' }}>{imgError}</div>}
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-        <button type="button" className="btn-primary" style={{ flex: 1 }} onClick={onAddImage}>Add image</button>
+        <button type="button" className="btn-primary" style={{ flex: 1, minWidth: 150 }} onClick={onAddImage}>Add image</button>
         {sel.length > 0 && (
           <button type="button" className="btn-secondary" style={{ flex: 1 }} aria-expanded={showAlign}
             aria-label="Align" title="Align the selection" onClick={() => setShowAlign((s) => !s)}>Align</button>
