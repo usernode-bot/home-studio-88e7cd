@@ -78,6 +78,7 @@
        classes, swap this link for the platform-hosted engine instead:
        <script src="/usernode-tailwind/v1/tailwind.js"></script> -->
   <link rel="stylesheet" href="/tailwind.css">
+  <link rel="stylesheet" href="/screens.css">
   <!-- The platform bridge, centrally hosted and loaded by RELATIVE path (the
        handler in server.js serves it under a plain "node server.js"; the
        platform's edge answers it everywhere else). Never vendor it and never
@@ -115,21 +116,60 @@
   <!-- (Named in prose on purpose: Tailwind compiles any class-name word in
        these files, comments included, and the starter should ship only the
        components its screen uses.) -->
-  <main class="mx-auto flex max-w-md flex-col gap-8 px-4 py-10">
-
-    <!-- usernode-starter-notice@1 — starter-template messaging. When building
-         the user's real app, replace this whole screen and delete this block,
-         both sentinel comments included. -->
-    <section class="card flex flex-col items-start gap-3">
-      <div class="flex h-20 w-20 items-center justify-center rounded-2xl border border-line bg-ground text-title">🎨</div>
-      <span class="rounded-full bg-raised px-3 py-1 text-small font-medium text-muted">Starter template</span>
-      <h1 class="text-title">Home Studio</h1>
-      <p class="text-body text-muted">Welcome to your new app! Everything on this screen is placeholder content that came with it.</p>
-      <p class="text-body text-muted">To change this app, ask Homeroom bot: tap the <strong class="font-semibold text-fg">Homeroom icon</strong>, then <strong class="font-semibold text-fg">Suggest an improvement</strong>. Describe what you'd like in plain English, and it will be turned into your real app.</p>
-    </section>
-    <!-- /usernode-starter-notice@1 -->
-
-    <p class="text-center text-small text-muted">Built on Homeroom. This template screen disappears once you build your real app.</p>
-  </main>
+  <!-- usernode-spec-screens@1: the screens the spec drew, carried over by the platform as this
+       first version's starting point. Their styles are in public/screens.css.
+       Change them where behaviour needs it; do not redraw them. -->
+  <div data-spec-screen="1">
+    <div class="app">
+    <div class="top"><div><h1>Home Studio</h1><div class="sub">Garden supper poster, saved on this device</div></div><span style="flex:1"></span>
+    <button class="ib" aria-label="Undo"><svg viewBox="0 0 24 24"><path d="M9 14L4 9l5-5"/><path d="M4 9h10a6 6 0 010 12h-3"/></svg></button>
+    <button class="ib" aria-label="Redo"><svg viewBox="0 0 24 24"><path d="M15 14l5-5-5-5"/><path d="M20 9H10a6 6 0 000 12h3"/></svg></button></div>
+    <div class="toolbar" role="toolbar" aria-label="Tools">
+    <button class="tool on" aria-label="Select"><svg viewBox="0 0 24 24"><path d="M5 3l14 8-6 2-2 6z"/></svg></button>
+    <button class="tool" aria-label="Text"><svg viewBox="0 0 24 24"><path d="M5 6V4h14v2M12 4v16M9 20h6"/></svg></button>
+    <button class="tool" aria-label="Rectangle"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg></button>
+    <button class="tool" aria-label="Ellipse"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg></button>
+    <button class="tool" aria-label="Line"><svg viewBox="0 0 24 24"><path d="M5 19L19 5"/></svg></button>
+    <span class="sep"></span>
+    <button class="tool" aria-label="Group"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="11" height="11" rx="1"/><rect x="10" y="10" width="11" height="11" rx="1"/></svg></button>
+    <button class="tool" aria-label="Add guide"><svg viewBox="0 0 24 24"><path d="M4 4v16M20 4v16M8 12h8"/></svg></button>
+    </div>
+    <div class="pages"><span class="pg on">Page 1</span><span class="pg">Page 2</span><span class="pg">Page 3</span><span class="pg">+ Add</span><span style="margin-left:auto" class="sub">1080 × 1350</span></div>
+    <div class="work">
+    <div class="art">
+    <div class="el" style="left:0;top:0;width:290px;height:150px;background:#f2c94c"></div>
+    <div class="el" style="left:190px;top:20px;width:70px;height:70px;border-radius:50%;background:#e4572e"></div>
+    <div class="el" style="left:22px;top:60px;width:110px;height:60px;background:#1f6f5c;transform:rotate(-4deg)"></div>
+    <div class="el" style="left:22px;top:222px;font:700 30px/32px ui-serif,Georgia,serif;color:#1c1917">Garden<br>supper</div>
+    <div class="el" style="left:22px;top:300px;font:14px/20px system-ui;color:#44403c">Saturday 14 June, 6 pm<br>Bring a dish to share</div>
+    </div>
+    <div class="sel" style="left:68px;top:84px"><span class="h" style="left:-6px;top:-6px"></span><span class="h" style="right:-6px;top:-6px"></span><span class="h" style="left:-6px;bottom:-6px"></span><span class="h" style="right:-6px;bottom:-6px"></span><span class="h" style="left:53px;top:-6px"></span><span class="h" style="left:53px;bottom:-6px"></span><span class="rot" style="right:-22px;top:-22px"></span><span class="rot" style="left:-22px;bottom:-22px"></span></div>
+    <div class="gl" style="left:72px;top:28px;width:1px;height:374px"></div>
+    <div class="gl" style="left:50px;top:118px;width:290px;height:1px"></div>
+    <span class="tag" style="left:78px;top:160px">X 22</span>
+    <div class="zoom"><span aria-label="Zoom out">−</span><span>75%</span><span aria-label="Zoom in">+</span></div>
+    </div>
+    <div class="panel">
+    <div class="section-label">Layers on Page 1</div>
+    <ul class="list">
+    <li class="list-row"><svg viewBox="0 0 24 24"><path d="M5 6V4h14v2M12 4v16M9 20h6"/></svg><span>Garden supper</span><span>Text</span></li>
+    <li class="list-row"><svg viewBox="0 0 24 24"><path d="M5 6V4h14v2M12 4v16M9 20h6"/></svg><span>Saturday 14 June</span><span>Text</span></li>
+    <li class="list-row on"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg><span>Green block</span><span>Shape</span></li>
+    <li class="list-row"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/></svg><span>Red sun</span><span>Shape</span></li>
+    <li class="list-row"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"/></svg><span>Yellow sky</span><span>Shape</span></li>
+    </ul>
+    </div>
+    <div class="panel" style="padding-top:0">
+    <div class="section-label">Properties: Green block</div>
+    <div class="list"><div class="grid">
+    <div class="f"><b>X</b>22</div><div class="f"><b>Y</b>60</div>
+    <div class="f"><b>W</b>110</div><div class="f"><b>H</b>60</div>
+    <div class="f"><b>Angle</b>-4°</div><div class="f"><b>Opacity</b>100%</div>
+    <div class="f"><b>Fill</b><span class="sw"></span></div><div class="f"><b>Corner</b>0</div></div></div>
+    <div style="display:flex;gap:8px;margin-top:12px"><button class="btn-primary" style="flex:1">Add image</button><button class="btn-secondary" style="flex:1">Align</button></div>
+    </div>
+    </div>
+  </div>
+  <!-- /usernode-spec-screens@1 -->
 </body>
 </html>
