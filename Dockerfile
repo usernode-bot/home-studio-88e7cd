@@ -1,29 +1,22 @@
-# Stage 1 — compile this app's Tailwind stylesheet.
-#
-# Runs on every image build (production deploys AND staging previews), so
-# public/tailwind.css is always generated from the markup in THIS commit.
-# That is why there is no committed CSS artifact to keep in sync and no
-# rebuild step for you to remember: add a class, push, it is in the next
-# build. tailwindcss lives only in this stage, so the runtime image below
-# stays exactly as small as it was.
-FROM node:22-alpine AS css
+# Stage 1 — build the app: the Tailwind stylesheet (compiled through Vite's
+# PostCSS pipeline) and the React bundle, into dist/.
+FROM node:22-alpine AS build
 WORKDIR /build
 COPY package.json package-lock.json ./
 RUN npm ci --include=dev
-COPY tailwind.config.js ./
+COPY vite.config.js postcss.config.js tailwind.config.js vitest.config.js ./
 COPY styles ./styles
+COPY web ./web
 COPY public ./public
 RUN npm run build
 
-# Stage 2 — the app itself (unchanged apart from the one COPY at the end).
+# Stage 2 — the app itself (server + dependencies + the built dist/).
 FROM node:22-alpine
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
-COPY --chown=1000:1000 . .
-# After the source copy so the compiled stylesheet is not overwritten by the
-# source tree (which deliberately does not contain one).
-COPY --chown=1000:1000 --from=css /build/public/tailwind.css ./public/tailwind.css
+COPY --chown=1000:1000 server.js ./
+COPY --chown=1000:1000 --from=build /build/dist ./dist
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
   CMD wget -qO- http://localhost:3000/health || exit 1

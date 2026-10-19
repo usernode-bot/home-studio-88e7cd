@@ -35,7 +35,7 @@ const GUEST_PUBLIC_KEY = (process.env.USERNODE_GUEST_JWT_PUBLIC_KEY || '')
 // Paths that stay open without authentication. Add a path here (and add it
 // with `app.get`/`app.post` below) if you deliberately want it public.
 // Everything else requires a valid platform-issued JWT.
-const PUBLIC_API_PATHS = new Set(['/health']);
+const PUBLIC_API_PATHS = new Set(['/health', '/api/env']);
 
 app.use(express.json());
 
@@ -147,6 +147,11 @@ app.use((req, res, next) => {
 
 app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
+// Tells the client which environment it is on. The staging demo
+// (?demo=1) only opens when this says staging; in production ?demo=1
+// does nothing.
+app.get('/api/env', (_req, res) => res.json({ staging: IS_STAGING }));
+
 // The template ships no favicon file; index.html carries an inline SVG
 // icon instead. Answer 204 here so anything that still probes
 // /favicon.ico (older browsers, direct visits) doesn't fall through to
@@ -154,7 +159,7 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 // fresh load.
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
 
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'dist')));
 
 // HTML shell: serve the app if authenticated. Unauthenticated top-level
 // visits (share links pasted into a browser — Sec-Fetch-Dest: document)
@@ -188,13 +193,23 @@ app.get('*', (req, res) => {
   </div>
 </body>`);
   }
-  res.sendFile(path.join(__dirname, 'public', 'index.html'));
+  res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 
 async function start() {
   const server = app.listen(port, () => console.log(`Listening on :${port}`));
   // Let Envoy retire idle upstream connections at 60s, with a 15s margin.
   server.keepAliveTimeout = 75_000;
+
+  // Stop cleanly: quit listening, give in-flight requests 3 s to drain,
+  // then exit. The platform stops builds with SIGTERM/SIGINT.
+  const shutdown = (signal) => {
+    console.log(`${signal}: closing`);
+    server.close(() => process.exit(0));
+    setTimeout(() => process.exit(0), 3000).unref();
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }
 
 start().catch(err => { console.error(err); process.exit(1); });

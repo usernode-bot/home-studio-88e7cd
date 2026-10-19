@@ -95,24 +95,47 @@ tables you've marked private), etc.
 
 ## About Home Studio
 
-A free, open-source design editor that runs in your browser
-
-_(add a sentence or two more of product context here so Claude Code has a
-shared understanding of what this app is for)_
+A free, open-source graphic design editor that runs entirely in the browser.
+People make a design at a size they set, add text, shapes and images, then
+move, resize, rotate, align and group them, across pages, with undo and
+autosave to their own device (IndexedDB only). Phase 1 is the core editor:
+exporting, templates, sharing and sync come in later phases. No accounts,
+no network features, no paid anything.
 
 ## Design
 
-This app's look. The first real version fills in the blanks; every later
-change follows it, and updates it when a request changes the look on purpose.
+The workspace is a quiet neutral grey with a dotted canvas board, so the
+white page and its colours stand out. The action colour is a clear blue,
+used for selection, handles, the active tool and the primary button. A pink
+guide colour appears only for live alignment lines and their position tags,
+the way design tools have long marked guides.
 
-- **Palette:** _(name the accent, any second colour and the neutrals, e.g.
-  "accent: tomato red; second: basil green; neutrals: warm greys")_
-- **Signature element:** _(the one thing on screen drawn from this app's
-  subject, which no other app would have)_
-- **Type scale:** `text-title`, `text-heading`, `text-body`, `text-small`
-  _(change their sizes in `tailwind.config.js` if you must, not their number)_
-- **One fixed look:** _(only for an app drawn as its own scene, such as a
-  game: which look, and why. Otherwise delete this line.)_
+- **Palette:** neutrals warm grey (`ground` 244 244 242 light / 22 22 21
+  dark, `surface` white / 34 34 32, `raised` 236 236 233 / 46 46 43);
+  accent clear blue (`accent` 37 84 214 / 125 160 255, with `on-accent`
+  white / deep blue 12 26 72); guide pink (`guide` 219 39 119 / 244 114 182)
+  used only for snap lines and their tags.
+- **Signature element:** the selection frame — square resize handles on the
+  edges and round rotation handles just outside each corner, with the pink
+  guides that appear live while dragging.
+- **Type scale:** `text-title`, `text-heading`, `text-body`, `text-small`,
+  system-ui throughout.
+- Both looks follow the viewer's Homeroom theme; the page keeps its own
+  background colour in both. The editor is a full-window app (not a
+  `page-column` screen): canvas centre, layers one side, properties the
+  other, tools along the top; on a phone the panels stack below the canvas.
+
+## App-specific conventions
+
+- Elements live in a flat bottom-first array per page; groups nest children
+  with coordinates relative to the group's own origin.
+- One history entry per finished gesture (or discrete edit), never per
+  pointer move; drag gestures preview through the reducer without history
+  and push a `push-before` snapshot when the gesture ends.
+- Images are Blobs in a separate IndexedDB store keyed by id; deleting a
+  design deletes its images.
+- The staging demo seeds a separate `home-studio-demo` database, only when
+  `GET /api/env` says staging and the URL has `?demo=1`.
 
 The kit is in `styles/tailwind-input.css`: colour tokens with a light and
 a dark value (named in `tailwind.config.js`), and a few components
