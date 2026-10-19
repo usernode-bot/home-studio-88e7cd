@@ -2,12 +2,14 @@
 // upgrade, imports, favourites, components and duplicating designs.
 
 import 'fake-indexeddb/auto';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { openDB } from 'idb';
 import {
   openDesignsDb, putDesign, getDesign, listDesigns, putImage, getImage, duplicateDesign, putAsset, listAssets,
   deleteAsset, getFavorites, setFavorite, saveComponent, listComponents, componentElements, deleteComponent,
+  createAutoSaver,
 } from '../web/src/persist/db.js';
+import { writeJournal, dropJournal } from '../web/src/persist/recovery.js';
 import { newDesign, newElement, walk } from '../web/src/doc/model.js';
 import { instantiateTemplate, TEMPLATES } from '../web/src/assets/templates.js';
 
@@ -110,5 +112,50 @@ describe('database', () => {
     expect(await listComponents(db)).toEqual([]);
     expect(await getImage(db, savedImage)).toBe(null);
     expect(await getImage(db, placed[1].imageId)).toBeTruthy(); // placed copies stay
+  });
+
+  it('autosave debounces one design, saves a switched design at once, and drop cancels only its own', async () => {
+    vi.useFakeTimers();
+    const saved = [];
+    const saver = createAutoSaver(async (d) => { saved.push(d); });
+    try {
+      // Two schedules of the same design: one save, 800 ms later.
+      saver.schedule({ id: 'a', name: 'A1' });
+      saver.schedule({ id: 'a', name: 'A2' });
+      await vi.advanceTimersByTimeAsync(799);
+      expect(saved).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(saved.map((d) => d.name)).toEqual(['A2']);
+      // Editing A then opening B: A's last edit saves at once, B debounces.
+      saver.schedule({ id: 'a', name: 'A3' });
+      saver.schedule({ id: 'b', name: 'B1' });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(saved.map((d) => d.name)).toEqual(['A2', 'A3']);
+      await vi.advanceTimersByTimeAsync(800);
+      expect(saved.map((d) => d.name)).toEqual(['A2', 'A3', 'B1']);
+      // drop cancels only the design it names.
+      saver.schedule({ id: 'b', name: 'B2' });
+      saver.drop('a'); // nothing pending for A: B's save stays
+      saver.drop('b');
+      await vi.advanceTimersByTimeAsync(800);
+      expect(saved).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('dropJournal clears only the matching design', () => {
+    const store = new Map();
+    const storage = {
+      setItem: (k, v) => store.set(k, v),
+      getItem: (k) => (store.has(k) ? store.get(k) : null),
+      removeItem: (k) => store.delete(k),
+    };
+    writeJournal(storage, 'journal-test', { id: 'd1', updatedAt: 5, pages: [] });
+    expect(storage.getItem('home-studio:unsaved:journal-test')).toBeTruthy();
+    dropJournal(storage, 'journal-test', 'd2');
+    expect(storage.getItem('home-studio:unsaved:journal-test')).toBeTruthy();
+    dropJournal(storage, 'journal-test', 'd1');
+    expect(storage.getItem('home-studio:unsaved:journal-test')).toBe(null);
   });
 });

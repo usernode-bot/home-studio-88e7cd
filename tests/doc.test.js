@@ -9,6 +9,7 @@ import {
   reorderElement, groupSelection, ungroupSelection, duplicateSelection, pageAdd, pageDelete,
 } from '../web/src/doc/store.js';
 import { undo as undoStep, redo as redoStep, snapshot } from '../web/src/doc/history.js';
+import { sameElementView } from '../web/src/render/elementMemo.js';
 
 const rect = (x, y, w, h, extra = {}) => newElement('rect', { x, y, w, h }, extra);
 
@@ -57,6 +58,27 @@ describe('model', () => {
 });
 
 describe('store transforms', () => {
+  it("'load' with a null doc clears the editor without throwing", () => {
+    let state = initialDocState();
+    state = docReducer(state, { type: 'load', doc: newDesign('Solo', 400, 400) });
+    state = docReducer(state, { type: 'select', ids: ['x'] });
+    state = docReducer(state, { type: 'load', doc: null });
+    expect(state.doc).toBe(null);
+    expect(state.pageId).toBe(null);
+    expect(state.selection).toEqual([]);
+    expect(state.past).toEqual([]);
+    expect(state.future).toEqual([]);
+    expect(state.editingId).toBe(null);
+  });
+
+  it('sameElementView needs equal updatedAt when rev repeats', () => {
+    const el = { ...rect(0, 0, 10, 10), rev: 3, updatedAt: 100 };
+    expect(sameElementView(el, el)).toBe(true);
+    expect(sameElementView(el, { ...el })).toBe(true);
+    expect(sameElementView(el, { ...el, updatedAt: 200 })).toBe(false);
+    expect(sameElementView(el, { ...el, rev: 4 })).toBe(false);
+  });
+
   const makeDoc = () => {
     const d = newDesign('Test', 1000, 1000);
     addElements(d, d.pages[0].id, [rect(0, 0, 100, 100), rect(200, 200, 50, 50)]);

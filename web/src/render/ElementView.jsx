@@ -10,6 +10,7 @@ import {
   fillCss, borderCss, dashArray, shadowCss, adjustFilter, cropLayout, MASKS, SHAPES, textStyles,
 } from '../doc/style.js';
 import { svgDataUrl } from '../assets/svg.js';
+import { sameElementView } from './elementMemo.js';
 
 const dropShadow = (s) => (s ? `drop-shadow(${shadowCss(s)})` : undefined);
 
@@ -124,11 +125,12 @@ function ElementViewInner({ el, images, onPointerDown, onDoubleClick }) {
 // the document on every edit, so identity alone says nothing. Every
 // transform that changes an element bumps its `rev` (store.js touch), so
 // the memo compares one number instead of stringifying the whole element
-// on each frame of a drag.
+// on each frame of a drag — but `rev` repeats after undo and across
+// devices, so equal revisions also need the edit time (elementMemo.js).
 const ElementView = memo(ElementViewInner, (a, b) =>
   a.onPointerDown === b.onPointerDown &&
   a.onDoubleClick === b.onDoubleClick &&
-  (a.el === b.el || a.el.rev === b.el.rev) &&
+  sameElementView(a.el, b.el) &&
   (a.images === b.images || !usesImages(a.el) || sameImages(a.el, a.images, b.images)));
 
 function usesImages(el) {

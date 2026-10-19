@@ -2,8 +2,13 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import '../../styles/tailwind-input.css';
 import App from './ui/App.jsx';
+import { AppErrorBoundary } from './ui/ErrorBoundary.jsx';
 
-createRoot(document.getElementById('root')).render(<App />);
+createRoot(document.getElementById('root')).render(
+  <AppErrorBoundary>
+    <App />
+  </AppErrorBoundary>,
+);
 
 // Offline after the first visit: the service worker (web/sw.js, written to
 // dist/sw.js by the build) keeps the app's files. Registration can fail in

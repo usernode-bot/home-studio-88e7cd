@@ -4,7 +4,7 @@
 // known shapes with hard size caps, because a peer is untrusted — a
 // malformed or oversized message is dropped, never applied.
 
-import { uid } from '../doc/model.js';
+import { uid, PAGE_MIN, PAGE_MAX } from '../doc/model.js';
 import {
   addElements, removeElements, updateElements, moveElements, reorderElement,
   pageAdd, pageDelete, pageUpdate,
@@ -77,6 +77,67 @@ export function cleanPatch(patch) {
   return out;
 }
 
+// One page from a peer, for pageAdd: pages have no `type`, so
+// cleanElement refuses them wholesale — that is why a page added in a live
+// session never reached anyone. Everything a peer could smuggle in beyond
+// a page's own fields (a pattern's drawings, stray keys) is dropped.
+const clampPageSize = (v) => {
+  const n = fin(v);
+  return Math.min(PAGE_MAX, Math.max(PAGE_MIN, n === null ? 1080 : Math.round(n)));
+};
+
+const cleanGuide = (g) => {
+  if (!isObj(g) || typeof g.id !== 'string' || !g.id || g.id.length > 80) return null;
+  if (g.axis !== 'h' && g.axis !== 'v') return null;
+  const pos = fin(g.pos);
+  if (pos === null) return null;
+  return { id: g.id, axis: g.axis, pos };
+};
+
+export function cleanPage(raw) {
+  if (!isObj(raw) || typeof raw.id !== 'string' || !raw.id || raw.id.length > 80) return null;
+  if (typeof raw.name !== 'string' || raw.name.length > 120) return null;
+  const out = {
+    id: raw.id,
+    name: raw.name,
+    width: clampPageSize(raw.width),
+    height: clampPageSize(raw.height),
+    background: typeof raw.background === 'string' && raw.background.length <= 200 ? raw.background : '#ffffff',
+    guides: [],
+    elements: [],
+  };
+  const gradient = cleanPatch({ gradient: raw.gradient });
+  if (gradient) out.gradient = gradient.gradient;
+  if (Array.isArray(raw.guides)) {
+    out.guides = raw.guides.slice(0, 200).map(cleanGuide).filter(Boolean);
+  }
+  if (Array.isArray(raw.elements)) {
+    out.elements = raw.elements.slice(0, CAPS.elementsPerOp * 25).map((e) => cleanElement(e)).filter(Boolean);
+  }
+  return out;
+}
+
+// What a patch may change on an existing page or the doc, and in what
+// shape: without this a peer's pageSet or docSet could set any key
+// (elements, createdAt, whole new fields) and push any page size.
+const pagePatchKeys = { name: 1, background: 1, width: 1, height: 1, gradient: 1, pattern: 1 };
+
+function cleanScopedPatch(t, patch) {
+  if (!patch) return null;
+  const out = {};
+  if (t === 'docSet') {
+    if (typeof patch.name === 'string') out.name = patch.name;
+  } else {
+    for (const [k, v] of Object.entries(patch)) {
+      if (!pagePatchKeys[k]) continue;
+      if (k === 'width' || k === 'height') { if (fin(v) !== null) out[k] = clampPageSize(v); }
+      else if (k === 'pattern') { if (v === null) out[k] = null; } // a pattern is shared only when removed
+      else out[k] = v;
+    }
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 // Validate one message. Returns a normalized copy, or null when it is
 // not something this protocol speaks. kind: 'op' | 'presence' | 'hello' | 'state'.
 export function validateMessage(m, kind) {
@@ -136,15 +197,14 @@ export function validateMessage(m, kind) {
     if (!isIdList(m.ids)) return null;
     op.ids = m.ids;
   } else if (m.t === 'pageAdd') {
-    const page = cleanElement(m.page);
-    if (!page || !Array.isArray(page.elements)) return null;
-    page.elements = page.elements.slice(0, CAPS.elementsPerOp * 25);
+    const page = cleanPage(m.page);
+    if (!page) return null;
     op.page = page;
   } else if (m.t === 'pageDel') {
     if (typeof m.pageId !== 'string' || !m.pageId) return null;
     op.pageId = m.pageId;
   } else if (m.t === 'pageSet' || m.t === 'docSet') {
-    const patch = cleanPatch(m.patch);
+    const patch = cleanScopedPatch(m.t, cleanPatch(m.patch));
     if (!patch) return null;
     op.patch = patch;
     if (m.t === 'pageSet' && (typeof m.pageId !== 'string' || !m.pageId)) return null;
