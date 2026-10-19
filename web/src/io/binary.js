@@ -24,7 +24,9 @@ for (let i = 0; i < B64.length; i++) B64_INDEX[B64.charCodeAt(i)] = i;
 // Rejects anything that isn't plain base64, so a damaged file says so.
 export function base64ToBytes(text) {
   const s = String(text).replace(/\s+/g, '');
-  if (s.length % 4 !== 0 || /[^A-Za-z0-9+/=]/.test(s) || /=[^=]/.test(s)) throw new Error('bad base64');
+  // Padding only ever fills the last two characters; "A===" is corrupt,
+  // and decoding it would hand back garbage instead of an error.
+  if (s.length % 4 !== 0 || /[^A-Za-z0-9+/=]/.test(s) || /=[^=]/.test(s) || /===/.test(s)) throw new Error('bad base64');
   const pad = s.endsWith('==') ? 2 : s.endsWith('=') ? 1 : 0;
   const out = new Uint8Array((s.length / 4) * 3 - pad);
   let o = 0;

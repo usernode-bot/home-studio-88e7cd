@@ -4,7 +4,7 @@
 // finished gesture (see history.js); live drag previews go through the
 // same 'apply' action with history off.
 
-import { uid, newPage, boundsOfElement, unionBoxes, findElement, selectionBounds } from './model.js';
+import { uid, newPage, boundsOfElement, unionBoxes, findElement, selectionBounds, reidElement } from './model.js';
 import { snapshot, pushPast, undo as undoHistory, redo as redoHistory } from './history.js';
 
 export function initialDocState() {
@@ -89,6 +89,21 @@ export function docReducer(state, action) {
 
 // ── Document transforms (pure, tested) ───────────────────────────────────
 
+// Bump an element's revision and stamp when it was last edited: memoised
+// element views compare the revision instead of stringifying the whole
+// element on every edit, and the reconnect merge uses the edit time to
+// pick a winner when both sides edited the same element.
+export function touch(el) {
+  el.rev = (el.rev || 0) + 1;
+  el.updatedAt = Date.now();
+}
+
+// Revision only, no edit-time stamp: for copies that arrived whole from
+// the room, whose own edit times must survive.
+export function bump(el) {
+  el.rev = (el.rev || 0) + 1;
+}
+
 export function addElements(doc, pageId, els) {
   const page = doc.pages.find((p) => p.id === pageId);
   if (!page) return doc;
@@ -103,11 +118,17 @@ export function updateElements(doc, pageId, ids, patch) {
   if (!page) return doc;
   const apply = (els) => {
     for (const el of els) {
-      if (ids.includes(el.id)) Object.assign(el, patch);
+      if (ids.includes(el.id)) {
+        Object.assign(el, patch);
+        touch(el);
+      }
       if (el.type === 'group') apply(el.children);
     }
   };
   apply(page.elements);
+  // A patch can carry a whole new children array (a resized group): the
+  // child objects inside it are new and need their own bump.
+  if (patch.children) patch.children.forEach(touch);
   doc.updatedAt = Date.now();
   return doc;
 }
@@ -121,6 +142,7 @@ export function moveElements(doc, pageId, ids, dx, dy) {
     if (ids.includes(el.id)) {
       el.x += dx;
       el.y += dy;
+      touch(el);
     }
   }
   doc.updatedAt = Date.now();
@@ -154,7 +176,11 @@ export function groupSelection(doc, pageId, ids) {
   const chosen = page.elements.filter((el) => ids.includes(el.id));
   if (chosen.length < 2) return doc;
   const box = unionBoxes(chosen.map((el) => boundsOfElement(el)));
-  const children = chosen.map((el) => ({ ...structuredClone(el), x: el.x - box.x, y: el.y - box.y }));
+  const children = chosen.map((el) => {
+    const c = { ...structuredClone(el), x: el.x - box.x, y: el.y - box.y };
+    touch(c);
+    return c;
+  });
   const group = {
     id: uid(),
     type: 'group',
@@ -191,7 +217,9 @@ export function ungroupSelection(doc, pageId, ids) {
           y: el.y + el.h / 2 + lc.x * sin + lc.y * cos,
         };
         freedIds.push(c.id);
-        out.push({ ...structuredClone(c), x: ac.x - c.w / 2, y: ac.y - c.h / 2, rotation: c.rotation + (el.rotation || 0) });
+        const freed = { ...structuredClone(c), x: ac.x - c.w / 2, y: ac.y - c.h / 2, rotation: c.rotation + (el.rotation || 0) };
+        touch(freed);
+        out.push(freed);
       }
     } else {
       out.push(el);
@@ -242,16 +270,9 @@ export function pageDuplicate(doc, pageId) {
   const index = doc.pages.findIndex((p) => p.id === pageId);
   if (index === -1) return null;
   const copy = structuredClone(doc.pages[index]);
-  const reid = (page) => {
-    page.id = uid();
-    for (const el of page.elements) {
-      el.id = uid();
-      if (el.children) el.children.forEach((c) => (c.id = uid()));
-    }
-    for (const g of page.guides) g.id = uid();
-    return page;
-  };
-  reid(copy);
+  copy.id = uid();
+  for (const el of copy.elements) reidElement(el); // fresh ids all the way down
+  for (const g of copy.guides) g.id = uid();
   copy.name = copy.name + ' copy';
   doc.pages.splice(index + 1, 0, copy);
   doc.updatedAt = Date.now();

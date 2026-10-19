@@ -12,9 +12,15 @@ import { newRoomKey, looksLikeRoomKey } from '../net/signaling.js';
 import { newPeerId } from '../net/protocol.js';
 import { openNodeSignaling } from '../net/signaling-node.js';
 import { createSession } from '../net/session.js';
+import { PUBLIC_STUN } from '../net/webrtc.js';
 
 const MANUAL_PEER_HOST = 'host';
 const MANUAL_PEER_GUEST = 'guest';
+const TURN_KEY = 'home-studio:turn'; // the person's own relay setting
+
+const readTurn = () => {
+  try { return JSON.parse(localStorage.getItem(TURN_KEY) || 'null') || {}; } catch { return {}; }
+};
 
 export default function CollaborateDialog({ onClose, onStart, activeSession, onLeave, onAppEvent }) {
   const [screen, setScreen] = useState(activeSession ? 'live' : 'choose');
@@ -28,14 +34,41 @@ export default function CollaborateDialog({ onClose, onStart, activeSession, onL
   const [peers, setPeers] = useState([]);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState('');
+  const [turnUrl, setTurnUrl] = useState(() => (readTurn().url || ''));
+  const [turnUser, setTurnUser] = useState(() => (readTurn().username || ''));
+  const [turnPass, setTurnPass] = useState(() => (readTurn().credential || ''));
   const sessionRef = useRef(null);
+  const activeRef = useRef(activeSession);
+  activeRef.current = activeSession;
+
+  // The relay setting is the person's own, kept on this device: host
+  // candidates and the public STUN server connect most rooms without it.
+  const saveTurn = (url, user, pass) => {
+    try {
+      if (url.trim()) localStorage.setItem(TURN_KEY, JSON.stringify({ url: url.trim(), username: user.trim(), credential: pass }));
+      else localStorage.removeItem(TURN_KEY);
+    } catch { /* storage refused: the field still applies to this session */ }
+  };
+  const iceServers = () => {
+    const ice = [{ urls: PUBLIC_STUN }];
+    if (turnUrl.trim()) {
+      ice.push({
+        urls: turnUrl.trim().split(',').map((u) => u.trim()).filter(Boolean),
+        username: turnUser.trim() || undefined,
+        credential: turnPass || undefined,
+      });
+    }
+    return ice;
+  };
 
   useEffect(() => () => {
-    // If the dialog is torn down with a session that never connected,
-    // clean it up; a connected session belongs to the app now.
+    // Unmount only: if the dialog goes away with a session that never
+    // connected and the app has not adopted, clean it up. Re-running on
+    // every activeSession change would tear down the session the app just
+    // adopted (the null → session transition).
     const s = sessionRef.current;
-    if (s && !s.connected && !activeSession) s.leave();
-  }, [activeSession]);
+    if (s && !s.connected && !activeRef.current) s.leave();
+  }, []);
 
   const wireSession = (session) => {
     sessionRef.current = session;
@@ -45,6 +78,10 @@ export default function CollaborateDialog({ onClose, onStart, activeSession, onL
 
   const onEvent = (e) => {
     if (e.type === 'signal-out') {
+      // Only the initial offer/answer bundle becomes a code; a late
+      // candidate has no channel to travel over and must not overwrite
+      // the code someone is about to copy.
+      if (e.msg.type === 'candidate') return;
       setOutCode(codeFrom(e.msg));
       if (sessionRef.current && sessionRef.current.role === 'host') setScreen('host-code');
       else setScreen('join-answer');
@@ -66,7 +103,7 @@ export default function CollaborateDialog({ onClose, onStart, activeSession, onL
     setError('');
     const session = wireSession(createSession({
       role: 'host', peerId: MANUAL_PEER_HOST, name: cleanName() || 'Host',
-      signaling: null, onEvent,
+      signaling: null, iceServers: iceServers(), onEvent,
     }));
     session.admit(MANUAL_PEER_GUEST, 'Guest'); // creates the offer code
   };
@@ -79,7 +116,7 @@ export default function CollaborateDialog({ onClose, onStart, activeSession, onL
     if (!msg || msg.type !== 'offer') { setError('That code is not a host invitation.'); return; }
     const session = wireSession(createSession({
       role: 'guest', peerId: MANUAL_PEER_GUEST, name: cleanName() || 'Guest',
-      signaling: null, onEvent,
+      signaling: null, iceServers: iceServers(), onEvent,
     }));
     void session.signalIn(msg);
   };
@@ -102,7 +139,7 @@ export default function CollaborateDialog({ onClose, onStart, activeSession, onL
         }
       },
     });
-    wireSession(createSession({ role, peerId: pid, name: cleanName(), signaling: sig, onEvent }));
+    wireSession(createSession({ role, peerId: pid, name: cleanName(), signaling: sig, iceServers: iceServers(), onEvent }));
     setScreen(role === 'host' ? 'host-wait' : 'join-wait');
   };
 
@@ -141,6 +178,25 @@ export default function CollaborateDialog({ onClose, onStart, activeSession, onL
         <label className="block" style={{ marginBottom: 8 }}>
           <span className="section-label" style={{ display: 'block' }}>Node signaling address</span>
           <input className="field" value={nodeUrl} onChange={(e) => setNodeUrl(e.target.value)} placeholder="e.g. wss://studio.example.com/signal" />
+        </label>
+      )}
+      {nodeMode && (
+        <label className="block" style={{ marginBottom: 8 }}>
+          <span className="section-label" style={{ display: 'block' }}>TURN relay (optional)</span>
+          <input className="field" value={turnUrl}
+            onChange={(e) => { setTurnUrl(e.target.value); saveTurn(e.target.value, turnUser, turnPass); }}
+            placeholder="e.g. turn:relay.example.com:3478" />
+          {turnUrl.trim() && (
+            <>
+              <input className="field" style={{ marginTop: 4 }} value={turnUser}
+                onChange={(e) => { setTurnUser(e.target.value); saveTurn(turnUrl, e.target.value, turnPass); }}
+                placeholder="TURN username (optional)" />
+              <input className="field" style={{ marginTop: 4 }} type="password" value={turnPass}
+                onChange={(e) => { setTurnPass(e.target.value); saveTurn(turnUrl, turnUser, e.target.value); }}
+                placeholder="TURN password (optional)" />
+            </>
+          )}
+          <span className="sub" style={{ display: 'block', marginTop: 4 }}>Rooms connect without a relay on the same network or through the public STUN server. Add one only if connections keep failing across networks.</span>
         </label>
       )}
     </>

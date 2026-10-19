@@ -1,12 +1,14 @@
 // WebRTC peers: one RTCPeerConnection per remote peer, with one reliable
-// ordered DataChannel for the protocol. The default ICE policy is host
-// candidates only: it connects on the same network with no external
-// service at all. A self-hosted deployment that wants cross-network
-// connections adds its own STUN/TURN in its config (docs/self-hosting.md).
+// ordered DataChannel for the protocol. The default ICE policy pairs host
+// candidates with a public STUN server, so same-network connections work
+// with no service at all and cross-network ones work without setup; a
+// TURN relay can be added by the person in the collaborate dialog.
 
 import { encodeFrame, parseFrame } from './transport.js';
 
-const RTC_CONFIG = { iceServers: [], iceCandidatePoolSize: 0 };
+export const PUBLIC_STUN = 'stun:stun.l.google.com:19302';
+
+const RTC_CONFIG = { iceServers: [{ urls: PUBLIC_STUN }], iceCandidatePoolSize: 0 };
 
 // Wait for ICE gathering to finish (bounded) so a description carries all
 // its candidates. Copy-paste signaling has no channel for trickle, so the
@@ -63,6 +65,9 @@ export function createPeer({ initiator, peerId, iceServers, onmessage, onstate, 
     else if (pc.connectionState === 'failed' || pc.connectionState === 'closed' || pc.connectionState === 'disconnected') setState('closed');
   };
   pc.onicecandidate = (e) => {
+    // Candidates that surface after the waitIce bundle is already out
+    // cannot reach a copy-paste peer (there is no channel to carry them),
+    // so the session decides whether they are worth signalling at all.
     if (e.candidate && onsignal) onsignal({ type: 'candidate', to: peerId, candidate: JSON.stringify(e.candidate) });
   };
 

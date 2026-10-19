@@ -1,11 +1,30 @@
 const express = require('express');
 const path = require('path');
-const { Pool } = require('pg');
+const crypto = require('crypto');
+const fs = require('fs');
 const jwt = require('jsonwebtoken');
 
 const app = express();
 const port = process.env.PORT || 3000;
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+// The shell carries two inline scripts by design (the platform's dev-console
+// forwarder and the theme bootstrap). Their hashes come from the BUILT
+// index.html itself, so the policy allows exactly what the shell ships and
+// follows it when the shell changes — without opening the door to every
+// inline script.
+const INLINE_SCRIPT_HASHES = (() => {
+  try {
+    const html = fs.readFileSync(path.join(__dirname, 'dist', 'index.html'), 'utf8');
+    const hashes = [];
+    for (const m of html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)) {
+      if (m[1].trim()) hashes.push("'sha256-" + crypto.createHash('sha256').update(m[1]).digest('base64') + "'");
+    }
+    return hashes;
+  } catch (err) {
+    console.warn('could not hash the shell for the script policy: ' + err.message);
+    return [];
+  }
+})();
 
 // The platform signs user-identity tokens with an RSA private key it never
 // shares. Containers get only the PUBLIC half, so this app can verify who a
@@ -63,6 +82,31 @@ app.use(express.json());
 const PLATFORM_ORIGIN = (process.env.USERNODE_PLATFORM_ORIGIN || '')
   .replace(/\/+$/, '');
 
+// Baseline headers on every response. The CSP keeps third-party script
+// and style out (everything the app loads is same-origin, data: or blob:
+// by design) and names who may frame the app: itself and the platform
+// shell that embeds it. no-referrer keeps a ?token= in an address from
+// travelling with an outbound navigation.
+app.use((_req, res, next) => {
+  res.set({
+    'content-security-policy': [
+      "default-src 'self'",
+      "script-src 'self'" + (INLINE_SCRIPT_HASHES.length ? ' ' + INLINE_SCRIPT_HASHES.join(' ') : ''),
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob:",
+      "font-src 'self' data: blob:",
+      "connect-src *",
+      "worker-src 'self'",
+      "object-src 'none'",
+      "base-uri 'self'",
+      `frame-ancestors 'self'${PLATFORM_ORIGIN ? ' ' + PLATFORM_ORIGIN : ''}`,
+    ].join('; '),
+    'x-content-type-options': 'nosniff',
+    'referrer-policy': 'no-referrer',
+  });
+  next();
+});
+
 app.get(/^\/usernode-(?:bridge|native|tailwind)\//, async (req, res) => {
   try {
     if (!PLATFORM_ORIGIN) return res.sendStatus(503);
@@ -102,7 +146,9 @@ function requestNow(req) {
 // on subsequent fetches.
 app.use((req, res, next) => {
   req.now = requestNow(req);
-  const token = req.query.token || req.headers['x-usernode-token'];
+  // The forwarded header first (it never lands in access logs); the
+  // iframe's `?token=…` on the initial load stays supported.
+  const token = req.headers['x-usernode-token'] || req.query.token;
   if (token && JWT_PUBLIC_KEY && APP_AUDIENCE) {
     try {
       // Pin the algorithm, issuer and audience. Without `algorithms` a
@@ -131,10 +177,11 @@ app.use((req, res, next) => {
 
   // Static assets (CSS/JS/images) are always served; the API and the HTML
   // shell are gated so direct hits to the staging/prod subdomain don't
-  // leak app data to the public internet. A guest may READ: every GET,
+  // leak app data to the public internet. HEAD is a read too (a client
+  // probing a static file), not a write. A guest may READ: every GET,
   // `/api/*` included, so read routes must not assume req.user (use
   // `req.user ? req.user.id : null`). Every write needs an account.
-  if (req.method !== 'GET' || req.path.startsWith('/api/')) {
+  if ((req.method !== 'GET' && req.method !== 'HEAD') || req.path.startsWith('/api/')) {
     if (PUBLIC_API_PATHS.has(req.path)) return next();
     if (!req.user && req.guest) {
       if (req.method === 'GET' || req.method === 'HEAD') return next();
@@ -151,6 +198,10 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 // (?demo=1) only opens when this says staging; in production ?demo=1
 // does nothing.
 app.get('/api/env', (_req, res) => res.json({ staging: IS_STAGING }));
+
+// Anything else under /api/ is not a route: answer 404 JSON, never the
+// HTML shell (a script expecting JSON would parse a login page).
+app.use('/api', (_req, res) => res.status(404).json({ error: 'No such API route.' }));
 
 // The template ships no favicon file; index.html carries an inline SVG
 // icon instead. Answer 204 here so anything that still probes

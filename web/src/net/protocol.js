@@ -13,6 +13,7 @@ import {
 // ── Caps ─────────────────────────────────────────────────────────────────
 
 export const CAPS = {
+  frameBytes: 1024 * 1024, // one wire frame, ops and state snapshots alike
   opBytes: 512 * 1024, // one op message
   presenceBytes: 4 * 1024,
   elementsPerOp: 200,
@@ -96,7 +97,16 @@ export function validateMessage(m, kind) {
       return { id: p.id, elements: els };
     });
     if (pages.some((p) => !p)) return null;
-    return { pages };
+    const out = { pages };
+    // Element ids the sender knows were deleted, so a rejoining peer's
+    // merge does not resurrect them.
+    if (Array.isArray(m.tombstones)) {
+      const ids = m.tombstones
+        .filter((x) => typeof x === 'string' && x && x.length <= 80)
+        .slice(0, CAPS.elementsPerOp * 25);
+      if (ids.length) out.tombstones = ids;
+    }
+    return out;
   }
   // op
   if (!OP_TYPES.includes(m.t)) return null;
@@ -214,6 +224,15 @@ export function diffElements(before, after) {
 
 // Apply ops to an element list (pure): what a peer's page looks like after
 // its ops. Used to preview remote ops and to test the diff/apply roundtrip.
+// rev and updatedAt are each device's own bookkeeping (the memo's render
+// counter and the merge's tie-breaker), not what the ops carry: the result
+// is compared element for element, so it comes back without them.
+function withoutBookkeeping(el) {
+  const { rev, updatedAt, ...rest } = el;
+  if (Array.isArray(rest.children)) rest.children = rest.children.map(withoutBookkeeping);
+  return rest;
+}
+
 export function applyOpsToElements(els, ops) {
   const doc = { pages: [{ id: 'p', elements: structuredClone(els) }] };
   for (const op of ops) {
@@ -225,7 +244,7 @@ export function applyOpsToElements(els, ops) {
       for (let i = 0; i < op.ids.length; i++) reorderElement(doc, 'p', op.ids[i], i);
     }
   }
-  return doc.pages[0].elements;
+  return doc.pages[0].elements.map(withoutBookkeeping);
 }
 
 // A full page snapshot as an op list (the state a newcomer or a

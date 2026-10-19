@@ -121,11 +121,14 @@ function ElementViewInner({ el, images, onPointerDown, onDoubleClick }) {
 }
 
 // Re-render only when what the element draws changes: the canvas clones
-// the document on every edit, so identity alone says nothing.
+// the document on every edit, so identity alone says nothing. Every
+// transform that changes an element bumps its `rev` (store.js touch), so
+// the memo compares one number instead of stringifying the whole element
+// on each frame of a drag.
 const ElementView = memo(ElementViewInner, (a, b) =>
   a.onPointerDown === b.onPointerDown &&
   a.onDoubleClick === b.onDoubleClick &&
-  (a.el === b.el || JSON.stringify(a.el) === JSON.stringify(b.el)) &&
+  (a.el === b.el || a.el.rev === b.el.rev) &&
   (a.images === b.images || !usesImages(a.el) || sameImages(a.el, a.images, b.images)));
 
 function usesImages(el) {

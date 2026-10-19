@@ -213,8 +213,10 @@ export function pageToSvg(page, opts = {}) {
         return `<path d="${d}" fill="${fillOf(el.fill, el.gradient, w, h)}"${strokeAttrs(el)} stroke-linejoin="round"/>`;
       }
       case 'line': {
+        // Width 0 draws nothing, as the editor does — not a 1 px fallback.
+        if (!(el.strokeWidth > 0)) return '';
         const dash = dashArray(el.strokeStyle, el.strokeWidth);
-        return `<line x1="0" y1="0" x2="${num(w)}" y2="${num(h)}" stroke="${esc(el.stroke || '#000000')}" stroke-width="${num(el.strokeWidth || 1)}"${dash ? ` stroke-dasharray="${dash}"` : ''} stroke-linecap="round"/>`;
+        return `<line x1="0" y1="0" x2="${num(w)}" y2="${num(h)}" stroke="${esc(el.stroke || '#000000')}" stroke-width="${num(el.strokeWidth)}"${dash ? ` stroke-dasharray="${dash}"` : ''} stroke-linecap="round"/>`;
       }
       case 'svg':
         if (!el.svg) return '';
@@ -302,7 +304,7 @@ export function pageToSvg(page, opts = {}) {
       if (el.align === 'center') x0 = (el.w - lw) / 2;
       else if (el.align === 'right') x0 = el.w - lw;
       if (pad) marks.push(`<rect x="${num(x0)}" y="${num(base - m.ascent)}" width="${num(lw)}" height="${num(m.ascent + m.descent)}" fill="${esc(el.highlight)}"/>`);
-      const decoW = el.align === 'justify' && !ln.last ? el.w : ln.width;
+      const decoW = el.align === 'justify' && !ln.last ? el.w - pad * 2 : ln.width;
       const thick = Math.max(1, size / 15);
       if (el.underline) marks.push(`<rect x="${num(x0 + pad)}" y="${num(base + size * 0.08)}" width="${num(decoW)}" height="${num(thick)}" fill="${fill}"/>`);
       if (el.strike) marks.push(`<rect x="${num(x0 + pad)}" y="${num(base - size * 0.3)}" width="${num(decoW)}" height="${num(thick)}" fill="${fill}"/>`);
@@ -311,7 +313,7 @@ export function pageToSvg(page, opts = {}) {
         const spacing = el.letterSpacing || 0;
         const widths = words.map((wd) => m.width(wd) + spacing * [...wd].length);
         const gap = (el.w - widths.reduce((a, b) => a + b, 0)) / (words.length - 1);
-        let x = 0;
+        let x = x0 + pad; // the runs start where the glyphs do, inside the highlight pad
         words.forEach((wd, j) => {
           runs.push(`<tspan x="${num(x)}" y="${num(base)}">${esc(wd)}</tspan>`);
           x += widths[j] + gap;

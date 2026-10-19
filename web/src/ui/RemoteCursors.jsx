@@ -7,6 +7,23 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
+// A selected element's box in page space: group children carry
+// coordinates relative to their group's own origin, so each ancestor's
+// offset adds up on the way down.
+function boxOf(elements, id) {
+  const visit = (els, ox, oy) => {
+    for (const el of els) {
+      if (el.id === id) return { left: ox + el.x, top: oy + el.y, width: el.w, height: el.h };
+      if (el.children) {
+        const hit = visit(el.children, ox + el.x, oy + el.y);
+        if (hit) return hit;
+      }
+    }
+    return null;
+  };
+  return visit(elements, 0, 0);
+}
+
 export default function RemoteCursors({ session, page, zoom, peers, selection }) {
   const [art, setArt] = useState(null);
   const live = useRef({ session, page, selection });
@@ -61,11 +78,11 @@ export default function RemoteCursors({ session, page, zoom, peers, selection })
         return (
           <React.Fragment key={p.peerId}>
             {(p.presence.selection || []).map((id) => {
-              const el = page.elements.find((e) => e.id === id);
-              if (!el) return null;
+              const box = boxOf(page.elements, id);
+              if (!box) return null;
               return (
                 <div key={id} className="remote-select" style={{
-                  left: el.x, top: el.y, width: el.w, height: el.h,
+                  left: box.left, top: box.top, width: box.width, height: box.height,
                   borderColor: color,
                 }} />
               );

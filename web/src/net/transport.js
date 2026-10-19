@@ -6,7 +6,8 @@
 
 import { CAPS } from './protocol.js';
 
-export const MAX_FRAME = Math.max(CAPS.opBytes, CAPS.presenceBytes) * 2;
+// The one frame cap every sender and receiver derives from (protocol.js).
+export const MAX_FRAME = CAPS.frameBytes;
 
 // State: 'connecting' | 'open' | 'closed'.
 export function frameOk(data) {

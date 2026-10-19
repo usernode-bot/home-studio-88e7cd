@@ -20,17 +20,24 @@ const SHELL = '/index.html';
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
     const cache = await caches.open(CACHE);
-    // One by one, so a single failure doesn't cost the rest.
-    await Promise.all(PRECACHE.map((url) => cache.add(new Request(url, { cache: 'reload' })).catch(() => {})));
+    // One by one, so a single failure doesn't cost the rest. The shell is
+    // not precached here: a fetch from the worker carries no identity, so
+    // the platform can answer it with its sign-in page, and that page
+    // would sit in the cache as the app shell. The navigate handler
+    // stores the real shell on the first online visit instead.
+    await Promise.all(PRECACHE.filter((url) => url !== SHELL)
+      .map((url) => cache.add(new Request(url, { cache: 'reload' })).catch(() => {})));
     await self.skipWaiting();
   })());
 });
 
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
-    for (const key of await caches.keys()) {
-      if (key.startsWith('home-studio-') && key !== CACHE) await caches.delete(key);
-    }
+    const keys = (await caches.keys()).filter((k) => k.startsWith('home-studio-') && k !== CACHE);
+    // The newest previous cache survives one more version: a page still
+    // running the old code asks for its own hashed files right after this
+    // swap, and the new cache does not hold them yet. Older caches go.
+    for (const key of keys.slice(0, -1)) await caches.delete(key);
     await self.clients.claim();
   })());
 });

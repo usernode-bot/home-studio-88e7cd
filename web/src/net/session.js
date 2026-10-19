@@ -16,6 +16,7 @@
 // codes, exactly two peers with the fixed ids 'host' and 'guest').
 
 import { validateMessage, CAPS } from './protocol.js';
+import { MAX_FRAME } from './transport.js';
 import { createPeer } from './webrtc.js';
 import { createThrottle, displayName, colorForPeer } from './presence.js';
 
@@ -37,6 +38,22 @@ export function createSession({ role, peerId, name, signaling, iceServers, onEve
   }));
   const emitPeers = () => emit('peers', { peers: peersList(), role });
 
+  // A guest that asked the host for a full state (a sequence gap) and
+  // hears nothing back is not going to catch up silently: say so.
+  let resyncTimer = null;
+  const armResyncTimer = () => {
+    if (role !== 'guest') return;
+    clearTimeout(resyncTimer);
+    resyncTimer = setTimeout(() => {
+      resyncTimer = null;
+      emit('notice', { text: 'The room connection is too slow to catch up. Your edits are saved on this device.' });
+    }, 10000);
+  };
+  const clearResyncTimer = () => {
+    clearTimeout(resyncTimer);
+    resyncTimer = null;
+  };
+
   // ── Signaling ──────────────────────────────────────────────────────────
   // `signaling` is { send, close } backed by a WebSocket (node mode) or
   // null (manual mode, where outgoing signals are emitted as 'signal-out'
@@ -46,7 +63,14 @@ export function createSession({ role, peerId, name, signaling, iceServers, onEve
 
   const sendSignal = (msg) => {
     if (sig) sig.send(msg);
-    else emit('signal-out', { msg: { ...msg, from: peerId } });
+    else {
+      // Manual mode has no channel once the codes are exchanged, and the
+      // offer/answer codes already carry a complete ICE bundle (the offer
+      // waits for gathering). A candidate surfacing later cannot be
+      // delivered and would only overwrite the code someone is copying.
+      if (msg.type === 'candidate') return;
+      emit('signal-out', { msg: { ...msg, from: peerId } });
+    }
   };
 
   // Incoming signaling: an offer or answer for one of our peers.
@@ -130,7 +154,8 @@ export function createSession({ role, peerId, name, signaling, iceServers, onEve
       const p = peers.get(from);
       if (!p || !p.host) return;
       if (typeof m.seq === 'number' && m.seq >= 0) expectedSeq = m.seq + 1;
-      emit('state', { pages: state.pages, from });
+      clearResyncTimer();
+      emit('state', { pages: state.pages, from, tombstones: state.tombstones });
     }
   };
 
@@ -163,6 +188,7 @@ export function createSession({ role, peerId, name, signaling, iceServers, onEve
     }
     if (s > expectedSeq) {
       p.pc.send({ kind: 'needstate' });
+      armResyncTimer();
       return;
     }
     if (s < expectedSeq) return; // an old relay arriving late
@@ -190,14 +216,29 @@ export function createSession({ role, peerId, name, signaling, iceServers, onEve
   };
 
   // The app's edits, as diff ops. A guest sends to the host; the host
-  // assigns a sequence and sends to everyone. A batch too large for one
-  // message is split; a single op too large for one message is skipped
-  // for peers (the local edit stays, and everyone is told).
+  // assigns a sequence and sends to everyone. Every op is checked against
+  // what the protocol accepts before it leaves: a change a receiver would
+  // drop means divergence (applied here, not in the room), so it never
+  // leaves and the person is told. A batch too large for one message is
+  // split; a single op too large for one message is skipped for peers
+  // (the local edit stays, and everyone is told).
   const sendOps = (pageId, ops) => {
     if (!Array.isArray(ops) || !ops.length) return;
+    const sendable = [];
+    let refused = 0;
+    for (const op of ops) {
+      if (validateMessage({ ...op, pageId }, 'op')) sendable.push(op);
+      else refused += 1;
+    }
+    if (refused) {
+      emit('notice', { text: refused === 1
+        ? 'One change could not be shared with the room and applies only here.'
+        : refused + ' changes could not be shared with the room and apply only here.' });
+    }
+    if (!sendable.length) return;
     lamport += 1;
     const batches = [[]];
-    for (const op of ops) {
+    for (const op of sendable) {
       const batch = batches[batches.length - 1];
       const probe = JSON.stringify({ kind: 'ops', pageId, ops: [...batch, op], lamport });
       if (probe.length > CAPS.opBytes) {
@@ -230,17 +271,30 @@ export function createSession({ role, peerId, name, signaling, iceServers, onEve
   };
 
   // The app's answer to 'state-request' (a peer resyncing): the current
-  // page snapshots, with the sequence to resume from.
+  // page snapshots, with the sequence to resume from and the element ids
+  // this side knows were deleted, so the peer's merge respects them.
   const sendState = (pages, forPeer = null) => {
-    const msg = { kind: 'state', pages, seq };
-    if (JSON.stringify(msg).length > CAPS.opBytes * 4) {
-      emit('notice', { text: 'This design is too large to send to a peer.' });
-      return;
+    const tombs = [...new Set([...tombstones, ...remoteTombstones])];
+    // A big design does not fit one frame: the pages go out as several
+    // state messages, each held to the same frame cap every message is,
+    // and each part merges the same way on arrival.
+    const parts = [[]];
+    let oversize = false;
+    for (const p of pages) {
+      const part = parts[parts.length - 1];
+      if (JSON.stringify({ kind: 'state', pages: [...part, p], seq, tombstones: tombs }).length > MAX_FRAME && part.length) parts.push([p]);
+      else part.push(p);
+      if (JSON.stringify({ kind: 'state', pages: [p], seq, tombstones: tombs }).length > MAX_FRAME) oversize = true;
     }
-    if (forPeer) {
-      const p = peers.get(forPeer);
-      if (p) p.pc.send(msg);
-    } else broadcast(msg);
+    if (oversize) emit('notice', { text: 'This design is too large to share in full over the room connection.' });
+    for (const part of parts) {
+      if (!part.length) continue;
+      const msg = { kind: 'state', pages: part, seq, tombstones: tombs };
+      if (forPeer) {
+        const p = peers.get(forPeer);
+        if (p) p.pc.send(msg);
+      } else broadcast(msg);
+    }
   };
 
   const sendPresence = (presence) => {
@@ -252,6 +306,7 @@ export function createSession({ role, peerId, name, signaling, iceServers, onEve
 
   // ── Lifecycle ──────────────────────────────────────────────────────────
   const leave = () => {
+    clearResyncTimer();
     sendSignal({ type: 'bye' });
     for (const p of peers.values()) p.pc.close();
     peers.clear();

@@ -50,19 +50,14 @@ export async function getDesign(db, id) {
 }
 
 export async function deleteDesign(db, id) {
+  // Read the design before it is gone: its elements decide which image
+  // blobs go with it. Deleting first left every blob orphaned.
+  const design = await getDesign(db, id);
   await db.delete('designs', id);
   for (const v of await listVersions(db, id)) await db.delete('versions', v.id);
-  // Deleting a design also deletes its images: collect every imageId the
-  // design's elements reference, then drop those blobs.
-  const design = await getDesign(db, id);
   if (!design) return;
   const imageIds = new Set();
-  for (const page of design.pages) {
-    for (const el of page.elements) {
-      if (el.type === 'image' && el.imageId) imageIds.add(el.imageId);
-      for (const c of el.children || []) if (c.type === 'image' && c.imageId) imageIds.add(c.imageId);
-    }
-  }
+  for (const page of design.pages) for (const imageId of imageIdsIn(page.elements)) imageIds.add(imageId);
   for (const imageId of imageIds) await db.delete('images', imageId);
 }
 
@@ -333,7 +328,15 @@ export async function restoreBackup(db, parsed) {
     else out.kept += 1;
   }
   for (const v of parsed.versions) {
-    if (!(await db.get('versions', v.id))) { await db.put('versions', { ...v, auto: false }); out.versions += 1; }
+    if (!(await db.get('versions', v.id))) { await db.put('versions', { ...v, auto: false, restored: true }); out.versions += 1; }
+  }
+  // Restored versions are kept, not automatic, so nothing prunes them:
+  // restoring backup after backup would grow the store without end. They
+  // are capped the same way autos are, per design; versions a person
+  // saved are never touched.
+  for (const designId of new Set(parsed.versions.map((v) => v.designId))) {
+    const kept = (await listVersions(db, designId)).filter((v) => v.restored);
+    for (const old of kept.slice(VERSIONS_AUTO_KEEP)) await db.delete('versions', old.id);
   }
   for (const a of parsed.assets) {
     if (await db.get('assets', a.id)) continue;

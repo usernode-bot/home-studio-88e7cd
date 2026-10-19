@@ -13,10 +13,10 @@ import RemoteCursors from './RemoteCursors.jsx';
 import { icons } from './icons.jsx';
 import {
   docReducer, initialDocState, pageOf, addElements, moveElements, removeElements, updateElements,
-  duplicateSelection, groupSelection, ungroupSelection, pageAdd, reorderElement, pageDelete, pageUpdate,
+  duplicateSelection, groupSelection, ungroupSelection, pageAdd, reorderElement, pageDelete, pageUpdate, touch, bump,
 } from '../doc/store.js';
 import {
-  newDesign, newPage, newElement, uid, measureTextHeight, imageIdsIn, unionBoxes, boundsOfElement, PAGE_MAX, PAGE_MIN,
+  newDesign, newPage, newElement, uid, measureTextHeight, imageIdsIn, unionBoxes, boundsOfElement, PAGE_MAX, PAGE_MIN, walk,
 } from '../doc/model.js';
 import {
   openDesignsDb, listDesigns, putDesign, getDesign, deleteDesign, putImage, getImage, createAutoSaver, duplicateDesign,
@@ -42,6 +42,7 @@ import { loadSyncPref, saveSyncPref, runSync, queueChange, listOutbox } from '..
 import { getAdapter } from '../persist/adapters/index.js';
 import { loadSources, addSource, removeSource } from '../gallery/sources.js';
 import { diffElements } from '../net/protocol.js';
+import { mergeDocs } from '../net/merge.js';
 
 const TOOLS = [
   ['select', 'Select', 'V'],
@@ -276,6 +277,10 @@ export default function App() {
       setDbBroken(true);
       setDesigns([]);
       setPhase('empty');
+      // This is the case the crash-recovery copy exists for: the database
+      // is what failed, so offer whatever unsaved work it holds anyway.
+      const journal = journalStore() && readJournal(journalStore(), dbName.current);
+      if (journal) setRecovery(recoveryOffer(journal, null));
     }
   }, [open, refreshLibrary]);
 
@@ -938,30 +943,47 @@ export default function App() {
     watchRef.current = null;
   }, [apply]);
 
-  const applyRemoteState = useCallback((pages) => {
+  const applyRemoteState = useCallback((pages, tombs) => {
+    // The room's copy of the design arrives as full page snapshots. Merge
+    // rather than replace: while the connection was down this device may
+    // have kept editing, and a rejoin must not throw those edits away.
+    // Deletions win over edits (tombstones); a both-sides edit is decided
+    // per element by its last edit time.
+    const s = sessionRef.current;
+    const theirs = { doc: { pages: structuredClone(pages) }, tombstones: tombs || [] };
+    let conflicts = 0;
     apply((dr) => {
-      for (const rp of pages) {
-        const here = dr.pages.find((p) => p.id === rp.id);
-        if (here) here.elements = structuredClone(rp.elements);
-        else {
-          const like = dr.pages[0];
-          dr.pages.push({
-            ...newPage('Page', like ? like.width : 1080, like ? like.height : 1080),
-            id: rp.id,
-            elements: structuredClone(rp.elements),
-          });
-        }
+      const { doc: merged, conflicts: cs } = mergeDocs({ doc: dr, tombstones: s ? [...s.tombstones] : [] }, theirs);
+      conflicts = cs.length;
+      // Pages only the room has arrive without geometry: give them what a
+      // new local page would have, sized like the first page here.
+      const like = merged.pages[0];
+      for (const p of merged.pages) {
+        if (typeof p.width !== 'number') p.width = like ? like.width : 1080;
+        if (typeof p.height !== 'number') p.height = like ? like.height : 1080;
+        if (!p.name) p.name = 'Page';
+        if (!p.background) p.background = '#ffffff';
+        if (!Array.isArray(p.guides)) p.guides = [];
       }
-      dr.updatedAt = Date.now();
+      // Bump every element so the local revision sequence stays ahead of
+      // whatever the peers count by — revision only, keeping their edit
+      // times for the next merge.
+      for (const p of merged.pages) for (const el of walk(p.elements)) bump(el);
+      return merged;
     }, false);
     watchRef.current = null;
-  }, [apply]);
+    if (conflicts > 0) {
+      showNotice('info', 'Both sides edited while the connection was down: '
+        + conflicts + (conflicts === 1 ? ' element was' : ' elements were')
+        + ' reconciled, newest edit kept.');
+    }
+  }, [apply, showNotice]);
 
   const handleSessionEvent = useCallback((e) => {
     const s = sessionRef.current;
     if (!s) return;
     if (e.type === 'ops') applyRemoteOps(e.pageId, e.ops);
-    else if (e.type === 'state') applyRemoteState(e.pages);
+    else if (e.type === 'state') applyRemoteState(e.pages, e.tombstones);
     else if (e.type === 'state-request') {
       const d = stateRef.current.doc;
       if (d) s.sendState(pagesForState(d), e.to);
@@ -1042,7 +1064,7 @@ export default function App() {
   useEffect(() => {
     const onKey = (e) => {
       const t = e.target;
-      if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t.isContentEditable) return;
+      if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement || t.isContentEditable) return;
       if (document.querySelector('.dialog-scrim')) return; // dialogs have their own keys
       const st = stateRef.current;
       const p = st.doc ? st.doc.pages.find((pp) => pp.id === st.pageId) : null;
@@ -1287,7 +1309,7 @@ export default function App() {
             </span>
           ))}
           <span style={{ flex: 1 }} />
-          <button className="btn-secondary" style={{ minHeight: 32 }} data-collab-leave onClick={leaveSession}>
+          <button className="btn-secondary" style={{ minHeight: 44 }} data-collab-leave onClick={leaveSession}>
             Leave the room
           </button>
         </div>

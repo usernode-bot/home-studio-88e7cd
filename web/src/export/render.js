@@ -108,16 +108,15 @@ async function embeddedFontCss(pages, getFontBlob) {
   return css.join('\n');
 }
 
-async function imageUrls(pages, getImage) {
-  const map = {};
-  for (const p of pages) {
-    for (const id of imageIdsIn(p.elements)) {
-      if (map[id]) continue;
-      const blob = await getImage(id);
-      if (blob) map[id] = await blobToDataUrl(blob);
-    }
-  }
-  return map;
+// Images load a page at a time and are released after it: loading every
+// page's images up front held them all as data URLs at once, and a large
+// multi-page export ran out of memory before it finished. `uses` counts
+// the pages still ahead that need each id, so an image shared across
+// pages stays until its last page is done.
+function imageUses(pages) {
+  const uses = new Map();
+  for (const p of pages) for (const id of imageIdsIn(p.elements)) uses.set(id, (uses.get(id) || 0) + 1);
+  return uses;
 }
 
 function loadImage(url) {
@@ -164,7 +163,23 @@ export async function exportDesign(design, pages, settings, deps, onProgress = (
   const fmt = FORMATS[settings.format];
   const total = pages.length;
   onProgress(0, total);
-  const [fontCss, images] = await Promise.all([embeddedFontCss(pages, deps.getFontBlob), imageUrls(pages, deps.getImage)]);
+  const fontCss = await embeddedFontCss(pages, deps.getFontBlob);
+  const uses = imageUses(pages);
+  const images = {};
+  const loadPageImages = async (page) => {
+    for (const id of imageIdsIn(page.elements)) {
+      if (images[id]) continue;
+      const blob = await deps.getImage(id);
+      if (blob) images[id] = await blobToDataUrl(blob);
+    }
+  };
+  const releasePageImages = (page) => {
+    for (const id of imageIdsIn(page.elements)) {
+      const left = (uses.get(id) || 0) - 1;
+      uses.set(id, left);
+      if (left <= 0) delete images[id];
+    }
+  };
   const measure = createMeasure();
   const files = [];
   const pdfPages = [];
@@ -172,6 +187,7 @@ export async function exportDesign(design, pages, settings, deps, onProgress = (
   let capped = false;
   for (let i = 0; i < pages.length; i++) {
     const page = pages[i];
+    await loadPageImages(page);
     if (settings.format === 'svg') {
       const r = pageToSvg(page, { images, measure, fontCss, transparent: settings.transparent });
       missingImages += r.missingImages;
@@ -195,6 +211,7 @@ export async function exportDesign(design, pages, settings, deps, onProgress = (
       bytes = opaque ? setJpegDpi(bytes, dpi) : setPngDpi(bytes, dpi);
       files.push({ name: pageFileName(design, page, i, total, fmt.ext), bytes });
     }
+    releasePageImages(page);
     onProgress(i + 1, total);
   }
   const base = safeFileName(design.name);

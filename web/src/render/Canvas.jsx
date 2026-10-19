@@ -109,6 +109,7 @@ export default function Canvas({ state, dispatch, apply, page, zoom, setZoom, vi
   const [tag, setTag] = useState(null);
   const [size, setSize] = useState({ w: 0, h: 0 });
   const pointers = useRef(new Map());
+  const lastTap = useRef({ t: 0, id: null });
 
   const selection = state.selection;
   const tool = state.tool;
@@ -186,6 +187,9 @@ export default function Canvas({ state, dispatch, apply, page, zoom, setZoom, vi
     const g = gesture.current;
     const { page: p, zoom: z, dispatch: d, apply: ap } = live.current;
     if (!g || !p) return;
+    // Keep the tracked pointer position fresh: the pinch gesture measures
+    // the distance between the two tracked pointers on every move.
+    if (pointers.current.has(e.pointerId)) trackPointer(e);
     if (g.kind === 'pan') {
       setView({ x: g.startView.x + (e.clientX - g.startClient.x), y: g.startView.y + (e.clientY - g.startClient.y) });
       return;
@@ -207,13 +211,19 @@ export default function Canvas({ state, dispatch, apply, page, zoom, setZoom, vi
       const moving = unionBoxes(g.origBounds.map((b) => ({ ...b, x: b.x + dx, y: b.y + dy })));
       const others = p.elements.filter((el) => !g.ids.includes(el.id)).map(boundsOfElement);
       const snap = snapMove(p, moving, others, z, e.altKey);
+      // sdx/sdy is the total offset from the gesture start, but
+      // moveElements adds to the already-previewed doc, so apply only the
+      // step since the last event.
       const sdx = dx + snap.dx;
       const sdy = dy + snap.dy;
-      if (!g.moved && (Math.abs(sdx) > 0.01 || Math.abs(sdy) > 0.01)) {
+      const stepX = sdx - g.applied.x;
+      const stepY = sdy - g.applied.y;
+      g.applied = { x: sdx, y: sdy };
+      if (!g.moved && (Math.abs(stepX) > 0.01 || Math.abs(stepY) > 0.01)) {
         g.moved = true;
-        ap((doc) => moveElements(doc, p.id, g.ids, sdx, sdy), true);
-      } else if (g.moved) {
-        ap((doc) => moveElements(doc, p.id, g.ids, sdx, sdy), false);
+        ap((doc) => moveElements(doc, p.id, g.ids, stepX, stepY), true);
+      } else if (g.moved && (Math.abs(stepX) > 0.01 || Math.abs(stepY) > 0.01)) {
+        ap((doc) => moveElements(doc, p.id, g.ids, stepX, stepY), false);
       }
       setSnapLines(snap.lines);
       setTag(snap.lines.length ? snap.lines[0].label : null);
@@ -360,7 +370,12 @@ export default function Canvas({ state, dispatch, apply, page, zoom, setZoom, vi
     trackPointer(e);
     if (pointers.current.size === 2) {
       const [a, b] = [...pointers.current.values()];
-      gesture.current = null;
+      // A second finger always means a pinch. Whatever gesture was under
+      // way ends here: a move keeps the position it reached, a draft
+      // (marquee, create) is discarded.
+      if (gesture.current && gesture.current.kind !== 'move') setDraft(null);
+      setSnapLines([]);
+      setTag(null);
       begin({ kind: 'pinch', p1: [...pointers.current.keys()][0], p2: [...pointers.current.keys()][1], startDist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1 });
       return;
     }
@@ -398,12 +413,31 @@ export default function Canvas({ state, dispatch, apply, page, zoom, setZoom, vi
     } else {
       ids = [...selection];
     }
-    if (pointers.current.size === 2) return;
+    if (pointers.current.size === 2) {
+      // A second finger landing on an element is a pinch too, like a
+      // second finger on the empty canvas.
+      const [a, b] = [...pointers.current.values()];
+      if (gesture.current && gesture.current.kind !== 'move') setDraft(null);
+      setSnapLines([]);
+      setTag(null);
+      begin({ kind: 'pinch', p1: [...pointers.current.keys()][0], p2: [...pointers.current.keys()][1], startDist: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) || 1 });
+      return;
+    }
+    // A double-tap on touch opens text editing (iOS Safari sends no
+    // dblclick for a double-tap).
+    const now = Date.now();
+    const dblTap = e.pointerType === 'touch' && lastTap.current.id === top.id && now - lastTap.current.t < 350;
+    lastTap.current = { t: now, id: top.id };
+    if (dblTap && el.type === 'text') {
+      live.current.dispatch({ type: 'editing', id: el.id });
+      return;
+    }
     const start = pagePoint(e);
     begin({
       kind: 'move',
       ids,
       start,
+      applied: { x: 0, y: 0 },
       origBounds: ids.map((id) => boundsOfElement(p.elements.find((t) => t.id === id))),
     });
     function d2(next) {
@@ -450,13 +484,25 @@ export default function Canvas({ state, dispatch, apply, page, zoom, setZoom, vi
   const handlers = useRef({});
   handlers.current = { down: onElementPointerDown };
   const stableDown = useCallback((e, el) => handlers.current.down(e, el), []);
-  const stableDbl = useCallback((el) => live.current.dispatch({ type: 'editing', id: el.id }), []);
+  // Only text opens for editing: typing into the editor on another kind of
+// element measures its height from text fields it does not have.
+const stableDbl = useCallback((el) => {
+    if (el.type === 'text') live.current.dispatch({ type: 'editing', id: el.id });
+  }, []);
 
   // Space held: pan instead of select.
   const spaceDown = useRef(false);
   useEffect(() => {
     const down = (e) => {
-      if (e.code === 'Space' && !e.repeat && !(e.target instanceof HTMLInputElement) && !(e.target instanceof HTMLTextAreaElement)) {
+      // Leave Space to the control the user is on: a button, dropdown or
+      // link is activated by Space, not turned into a pan.
+      const t = e.target;
+      const control = t instanceof Element && (
+        t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement
+        || t instanceof HTMLSelectElement || t instanceof HTMLButtonElement
+        || (t instanceof HTMLAnchorElement && t.hasAttribute('href')) || t.hasAttribute('role')
+      );
+      if (e.code === 'Space' && !e.repeat && !control) {
         spaceDown.current = true;
         e.preventDefault();
       }
@@ -514,7 +560,7 @@ export default function Canvas({ state, dispatch, apply, page, zoom, setZoom, vi
               defaultValue={editingEl.text}
               onChange={(e) => {
                 const text = e.target.value;
-                ap((doc) => {
+                live.current.apply((doc) => {
                   updateElements(doc, page.id, [editingEl.id], { text });
                   const el = findElement(doc.pages.find((p) => p.id === page.id).elements, editingEl.id);
                   el.h = measureTextHeight(el);

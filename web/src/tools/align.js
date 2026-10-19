@@ -50,16 +50,19 @@ export function distributeBoxes(boxes, axis) {
   if (out.length < 3) return out;
   const key = axis === 'x' ? 'x' : 'y';
   const size = axis === 'x' ? 'w' : 'h';
-  out.sort((a, b) => a[key] - b[key]);
-  const first = out[0];
-  const last = out[out.length - 1];
+  // Space a sorted view of the boxes, then write the positions back into
+  // the original order: out[i] always answers boxes[i], whichever order
+  // the caller selected in.
+  const order = out.map((b, i) => ({ b, i })).sort((a, b) => a.b[key] - b.b[key]);
+  const first = order[0].b;
+  const last = order[order.length - 1].b;
   const span = last[key] + last[size] - first[key];
-  const totalSize = out.reduce((sum, b) => sum + b[size], 0);
-  const gap = (span - totalSize) / (out.length - 1);
+  const totalSize = order.reduce((sum, o) => sum + o.b[size], 0);
+  const gap = (span - totalSize) / (order.length - 1);
   let cursor = first[key];
-  for (const b of out) {
-    b[key] = cursor;
-    cursor += b[size] + gap;
+  for (const o of order) {
+    o.b[key] = cursor;
+    cursor += o.b[size] + gap;
   }
   return out;
 }

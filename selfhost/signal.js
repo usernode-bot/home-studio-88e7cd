@@ -75,6 +75,7 @@ const wss = new WebSocketServer({ port: PORT, maxPayload: MAX_FRAME });
 wss.on('connection', (ws) => {
   let room = null;
   let peerId = null;
+  const mine = new Map(); // every peer id this socket registered -> its room
 
   ws.on('message', (data) => {
     let m;
@@ -82,7 +83,7 @@ wss.on('connection', (ws) => {
     if (m && m.type === 'join') {
       const key = cleanRoom(m.room);
       const id = cleanText(m.from, 80);
-      if (!key || !id || sockets.has(id)) {
+      if (!key || !id || (sockets.has(id) && sockets.get(id) !== ws)) {
         ws.send(JSON.stringify({ type: 'error', text: 'That room key or peer id is not one this relay accepts.' }));
         return;
       }
@@ -91,10 +92,18 @@ wss.on('connection', (ws) => {
         ws.send(JSON.stringify({ type: 'error', text: 'That room is full.' }));
         return;
       }
-      if (room && room !== key) leave(room, peerId);
+      // A socket that joins again must not keep its previous registration
+      // alive: a ghost id could later be claimed by a newcomer, who would
+      // then receive the ghost's messages.
+      for (const [oldId, oldRoom] of mine) {
+        if (sockets.get(oldId) === ws) sockets.delete(oldId);
+        leave(oldRoom, oldId);
+      }
+      mine.clear();
       room = key;
       peerId = id;
       sockets.set(id, ws);
+      mine.set(id, key);
       const roster = rooms.get(key) || new Set();
       roster.add(id);
       rooms.set(key, roster);
@@ -117,7 +126,9 @@ wss.on('connection', (ws) => {
     const msg = cleanSignal({ ...m, from: peerId });
     if (!msg) return;
     if (msg.type === 'bye') {
+      if (sockets.get(peerId) === ws) sockets.delete(peerId);
       leave(room, peerId);
+      mine.delete(peerId);
       try { ws.close(); } catch { /* already gone */ }
       return;
     }
@@ -127,10 +138,12 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
-    if (room && peerId) {
-      leave(room, peerId);
-      sockets.delete(peerId);
-      log('left', room, peerId);
+    // By socket, not by the latest id alone: a socket that re-joined
+    // under a new id still owns the removal of every id it registered.
+    for (const [id, key] of mine) {
+      if (sockets.get(id) === ws) sockets.delete(id);
+      leave(key, id);
+      log('left', key, id);
     }
   });
 });

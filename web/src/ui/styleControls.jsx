@@ -32,12 +32,27 @@ export function NumField({ label, value, onCommit, style, step }) {
   );
 }
 
+// A colour drag inside the picker fires a stream of change events: the
+// first records history, the rest only preview, so one drag undoes in one
+// step (the same contract as RangeField). The session ends when the picker
+// closes (the input's native change event) or the field blurs.
 export function ColorField({ label, value, onCommit }) {
+  const session = useRef(false);
+  const inputRef = useRef(null);
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return undefined;
+    const end = () => { session.current = false; };
+    el.addEventListener('change', end);
+    return () => el.removeEventListener('change', end);
+  }, []);
   return (
     <label className="f">
       <b>{label}</b>
-      <input type="color" className="color" value={HEX.test(value || '') ? value : '#000000'}
-        onChange={(e) => onCommit(e.target.value)} />
+      <input ref={inputRef} type="color" className="color" value={HEX.test(value || '') ? value : '#000000'}
+        onPointerDown={() => { session.current = false; }}
+        onBlur={() => { session.current = false; }}
+        onChange={(e) => { onCommit(e.target.value, !session.current); session.current = true; }} />
     </label>
   );
 }
@@ -101,8 +116,8 @@ function FillSection({ title = 'Fill', from, gradient, setFrom, setGradient }) {
         <option value="linear">Linear gradient</option>
         <option value="radial">Radial gradient</option>
       </SelectField>
-      <ColorField label={gradient ? 'From' : 'Colour'} value={from} onCommit={setFrom} />
-      {gradient && <ColorField label="To" value={gradient.to} onCommit={(to) => setGradient({ ...gradient, to })} />}
+      <ColorField label={gradient ? 'From' : 'Colour'} value={from} onCommit={(v, first) => setFrom(v, first)} />
+      {gradient && <ColorField label="To" value={gradient.to} onCommit={(to, first) => setGradient({ ...gradient, to }, first)} />}
       {gradient && gradient.kind === 'linear' && (
         <NumField label="Angle" value={gradient.angle ?? 90} onCommit={(a) => setGradient({ ...gradient, angle: ((a % 360) + 360) % 360 })} />
       )}
@@ -110,12 +125,12 @@ function FillSection({ title = 'Fill', from, gradient, setFrom, setGradient }) {
   );
 }
 
-function BorderSection({ el, set }) {
+function BorderSection({ el, set, live }) {
   const isLine = el.type === 'line';
   return (
     <Section title={isLine ? 'Line' : 'Border'} data="border">
       <ColorField label="Colour" value={el.stroke || '#000000'}
-        onCommit={(v) => set({ stroke: v, strokeWidth: el.strokeWidth || (isLine ? 2 : 4) })} />
+        onCommit={(v, first) => live({ stroke: v, strokeWidth: el.strokeWidth || (isLine ? 2 : 4) }, first)} />
       <NumField label="Width" value={el.strokeWidth || 0} onCommit={(v) => set({ strokeWidth: Math.max(isLine ? 1 : 0, v), stroke: el.stroke || '#1c1917' })} />
       <SelectField label="Style" value={el.strokeStyle || 'solid'} onChange={(v) => set({ strokeStyle: v })}>
         <option value="solid">Solid</option>
@@ -130,7 +145,7 @@ function BorderSection({ el, set }) {
 }
 
 const SHADOW_ON = { x: 0, y: 8, blur: 16, color: '#000000', alpha: 0.3 };
-function ShadowSection({ el, set }) {
+function ShadowSection({ el, set, live }) {
   const s = el.shadow;
   const patch = (p) => set({ shadow: { ...s, ...p } });
   return (
@@ -145,7 +160,7 @@ function ShadowSection({ el, set }) {
           <NumField label="Y" value={s.y} onCommit={(v) => patch({ y: v })} />
           <NumField label="Blur" value={s.blur} onCommit={(v) => patch({ blur: Math.max(0, v) })} />
           <NumField label="Strength %" value={Math.round((s.alpha ?? 0.35) * 100)} onCommit={(v) => patch({ alpha: Math.min(1, Math.max(0, v / 100)) })} />
-          <ColorField label="Colour" value={s.color} onCommit={(v) => patch({ color: v })} />
+          <ColorField label="Colour" value={s.color} onCommit={(v, first) => live({ shadow: { ...s, color: v } }, first)} />
         </>
       )}
     </Section>
@@ -210,7 +225,7 @@ function TypographySection({ el, setText }) {
   );
 }
 
-function TextEffectsSection({ el, set }) {
+function TextEffectsSection({ el, set, live }) {
   const current = textEffectOf(el);
   return (
     <Section title="Effects" data="effects">
@@ -219,11 +234,11 @@ function TextEffectsSection({ el, set }) {
       }))} />
       {el.outline && (
         <>
-          <ColorField label="Outline" value={el.outline.color} onCommit={(v) => set({ outline: { ...el.outline, color: v } })} />
+          <ColorField label="Outline" value={el.outline.color} onCommit={(v, first) => live({ outline: { ...el.outline, color: v } }, first)} />
           <NumField label="Outline width" value={el.outline.width} onCommit={(v) => set({ outline: { ...el.outline, width: Math.max(0, v) } })} />
         </>
       )}
-      {el.highlight && <ColorField label="Highlight" value={el.highlight} onCommit={(v) => set({ highlight: v })} />}
+      {el.highlight && <ColorField label="Highlight" value={el.highlight} onCommit={(v, first) => live({ highlight: v }, first)} />}
     </Section>
   );
 }
@@ -282,20 +297,22 @@ export function StyleSections({ el, set, live, setText }) {
       )}
       {t === 'text' && <TypographySection el={el} setText={setText} />}
       {filled && (
-        <FillSection from={el.fill} gradient={el.gradient} setFrom={(v) => set({ fill: v })} setGradient={(g) => set({ gradient: g })} />
+        <FillSection from={el.fill} gradient={el.gradient}
+          setFrom={(v, first) => live({ fill: v }, first)} setGradient={(g, first) => live(g, first)} />
       )}
       {t === 'text' && (
-        <FillSection title="Colour" from={el.color} gradient={el.gradient} setFrom={(v) => set({ color: v })} setGradient={(g) => set({ gradient: g })} />
+        <FillSection title="Colour" from={el.color} gradient={el.gradient}
+          setFrom={(v, first) => live({ color: v }, first)} setGradient={(g, first) => live(g, first)} />
       )}
-      {t === 'text' && <TextEffectsSection el={el} set={set} />}
+      {t === 'text' && <TextEffectsSection el={el} set={set} live={live} />}
       {t === 'svg' && isRecolorable(el.svg) && (
         <Section title="Colour" data="svg-colour">
-          <ColorField label="Colour" value={el.color} onCommit={(v) => set({ color: v })} />
+          <ColorField label="Colour" value={el.color} onCommit={(v, first) => live({ color: v }, first)} />
         </Section>
       )}
       {t === 'image' && <ImageSection el={el} set={set} live={live} />}
-      {(filled || t === 'line' || t === 'image') && <BorderSection el={el} set={set} />}
-      <ShadowSection el={el} set={set} />
+      {(filled || t === 'line' || t === 'image') && <BorderSection el={el} set={set} live={live} />}
+      <ShadowSection el={el} set={set} live={live} />
     </>
   );
 }
@@ -303,11 +320,11 @@ export function StyleSections({ el, set, live, setText }) {
 // The page's background beyond its colour: a gradient, and any pattern a
 // library background brought.
 export function BackgroundSection({ page, apply }) {
-  const setPage = (patch) => apply((doc) => { Object.assign(doc.pages.find((p) => p.id === page.id), patch); doc.updatedAt = Date.now(); }, true);
+  const setPage = (patch, first = true) => apply((doc) => { Object.assign(doc.pages.find((p) => p.id === page.id), patch); doc.updatedAt = Date.now(); }, first);
   return (
     <>
       <FillSection title="Background" from={page.background} gradient={page.gradient || null}
-        setFrom={(v) => setPage({ background: v })} setGradient={(g) => setPage({ gradient: g })} />
+        setFrom={(v, first) => setPage({ background: v }, first)} setGradient={(g, first) => setPage(g, first)} />
       {page.pattern && (
         <button type="button" className="btn-secondary" style={{ width: '100%', marginTop: 8 }} onClick={() => setPage({ pattern: null })}>
           Remove pattern
