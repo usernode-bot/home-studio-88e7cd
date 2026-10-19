@@ -12,4 +12,13 @@ if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js').catch(() => {});
   });
+  // A new worker taking over means a new build arrived while this page was
+  // open. Reload once, so the page never runs against hashed chunks the
+  // updated cache no longer holds. The first claim (no controller yet)
+  // is not an update and does not reload.
+  let hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController) { hadController = true; return; }
+    window.location.reload();
+  });
 }

@@ -98,26 +98,40 @@ export async function runSync(db, adapter, access, opts = {}) {
   // Queued offline edits go first, newest state wins: flush sends each
   // queued design in its collected shape, read with this device's access.
   const queued = await flushOutbox(db, async (row) => {
-    if (row.kind === 'delete') return adapter.delete(cfg, row.designId);
+    if (row.kind === 'delete') {
+      await adapter.delete(cfg, row.designId);
+      delete pref.syncedAt[row.designId];
+      delete pref.manifest[row.designId];
+      return;
+    }
     const bytes = await designBytes(row.payload.design, access);
     const out = await adapter.put(cfg, row.designId, bytes);
     if (out.cid) pref.manifest[row.designId] = out.cid;
+    // Remember what was just pushed, or the plan reads the design as
+    // changed on both sides and keeps a needless conflict copy.
+    pref.syncedAt[row.designId] = typeof out.updatedAt === 'number'
+      ? out.updatedAt
+      : (row.payload.design.updatedAt || Date.now());
   });
   if (queued.sent) onNote(`Sent ${queued.sent} change${queued.sent === 1 ? '' : 's'} that waited for a connection.`);
 
   const local = (await db.getAll('designs')).map((d) => ({ id: d.id, name: d.name, updatedAt: d.updatedAt }));
   let remote = [];
-  try {
-    remote = await adapter.list(cfg);
-  } catch (err) {
-    if (!remote.length) {
-      // CID-backed stores cannot list; use the manifest of what this
-      // device itself has put there.
-      for (const id of Object.keys(pref.manifest)) {
-        const d = await getDesign(db, id);
-        if (d) remote.push({ id, name: d.name, updatedAt: d.updatedAt });
-      }
-    } else throw err;
+  if (typeof adapter.list === 'function') {
+    try {
+      remote = await adapter.list(cfg);
+    } catch (err) {
+      // A store that cannot say what it holds must not look like an empty
+      // one: the plan would push local copies over newer remote ones.
+      throw new Error('The design list could not be read, so nothing was synced. ' + (err.message || ''));
+    }
+  } else {
+    // CID-backed stores cannot list; use the manifest of what this
+    // device itself has put there.
+    for (const id of Object.keys(pref.manifest)) {
+      const d = await getDesign(db, id);
+      if (d) remote.push({ id, name: d.name, updatedAt: d.updatedAt });
+    }
   }
   const plan = planSync(local, remote, pref.syncedAt);
   let sent = 0;

@@ -26,6 +26,14 @@ export const ADAPTER_KINDS = ['local', 'node', 'ipfs'];
 
 export const MAX_REMOTE_BYTES = 64 * 1024 * 1024;
 
+// A fetch that gives up: a remote store that hangs must not wedge a sync
+// run (or the outbox flush) for ever. Every adapter fetch goes through it.
+export const REMOTE_TIMEOUT_MS = 20 * 1000;
+
+export function fetchTimed(url, init, ms = REMOTE_TIMEOUT_MS) {
+  return fetch(url, { ...init, signal: AbortSignal.timeout(ms) });
+}
+
 // Read a fetch response as bytes, refusing anything oversized or empty.
 export async function readCapped(res, what) {
   if (!res.ok) throw new Error(what + ' failed (' + res.status + ')');

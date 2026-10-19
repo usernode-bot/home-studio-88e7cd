@@ -1,6 +1,6 @@
 // The two dialogs: the new-design dialog and the designs sheet.
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { pageIsValid } from '../doc/model.js';
 import { icons } from './icons.jsx';
 import { SIZE_PRESETS } from '../assets/presets.js';
@@ -16,16 +16,42 @@ export function timeAgo(ts) {
   return d + ' d ago';
 }
 
-export function Scrim({ onClose, children, labelledBy, className = '', escape = false }) {
+export function Scrim({ onClose, children, labelledBy, className = '', escape = true }) {
+  const boxRef = useRef(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
   useEffect(() => {
-    if (!escape) return undefined;
-    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    // Move focus into the dialog on open (unless something inside already
+    // took it, like an autoFocus field), keep Tab cycling inside it, and
+    // hand focus back to where it came from when the dialog closes.
+    const box = boxRef.current;
+    const focusables = () => [...box.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')]
+      .filter((n) => !n.disabled && n.offsetParent !== null);
+    const restore = document.activeElement;
+    if (!box.contains(document.activeElement)) {
+      const first = focusables()[0];
+      if (first) first.focus();
+    }
+    const onKey = (e) => {
+      if (e.key === 'Escape') { closeRef.current(); return; }
+      if (e.key !== 'Tab') return;
+      const els = focusables();
+      if (!els.length) return;
+      const firstEl = els[0];
+      const lastEl = els[els.length - 1];
+      if (e.shiftKey && document.activeElement === firstEl) { e.preventDefault(); lastEl.focus(); }
+      else if (!e.shiftKey && document.activeElement === lastEl) { e.preventDefault(); firstEl.focus(); }
+      else if (!box.contains(document.activeElement)) { e.preventDefault(); firstEl.focus(); }
+    };
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [escape, onClose]);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      if (restore && restore.focus) restore.focus();
+    };
+  }, []);
   return (
     <div className="dialog-scrim" onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className={'dialog card ' + className} role="dialog" aria-modal="true" aria-labelledby={labelledBy}>
+      <div ref={boxRef} className={'dialog card ' + className} role="dialog" aria-modal="true" aria-labelledby={labelledBy}>
         {children}
       </div>
     </div>
@@ -99,8 +125,13 @@ export function DesignsSheet({ designs, currentId, onOpen, onNew, onDelete, onRe
           <li key={d.id} className={'list-row' + (d.id === currentId ? ' on' : '')}>
             {renaming === d.id ? (
               <input className="field" style={{ minHeight: 36 }} autoFocus defaultValue={d.name}
+                aria-label={'Rename ' + d.name}
                 onBlur={(e) => { onRename(d.id, e.target.value); setRenaming(null); }}
-                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') { onRename(d.id, e.target.value); setRenaming(null); } }} />
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { onRename(d.id, e.target.value); setRenaming(null); }
+                  else if (e.key === 'Escape') setRenaming(null); // cancel: keep the old name
+                  e.stopPropagation();
+                }} />
             ) : (
               <>
                 <button style={{ background: 'none', border: 0, padding: 0, font: 'inherit', color: 'inherit', cursor: 'pointer', textAlign: 'left', flex: 1, minHeight: 44 }}

@@ -13,6 +13,7 @@ import { newElement } from '../doc/model.js';
 import PagePreview from '../render/PagePreview.jsx';
 import ElementView from '../render/ElementView.jsx';
 import { icons } from './icons.jsx';
+import { Scrim } from './dialogs.jsx';
 
 const TABS = [
   ['templates', 'Templates'],
@@ -87,8 +88,8 @@ export default function Library({
   }[it.kind] || (it.kind === 'upload' && it.asset.kind === 'font' ? 'Add text in this font' : 'Add to page'));
 
   return (
-    <div className="dialog-scrim" onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="dialog card lib" role="dialog" aria-modal="true" aria-labelledby="library-title" data-library>
+    <Scrim onClose={onClose} labelledBy="library-title" className="lib">
+      <div data-library>
         <div className="lib-head">
           <h2 className="text-heading" id="library-title" style={{ flex: 1 }}>Library</h2>
           <button className="btn-secondary" onClick={onClose}>Close</button>
@@ -165,7 +166,7 @@ export default function Library({
           </ul>
         )}
       </div>
-    </div>
+    </Scrim>
   );
 }
 

@@ -25,12 +25,20 @@
 import http from 'node:http';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
+import { timingSafeEqual } from 'node:crypto';
 import { handleGallery } from './gallery.js';
 
 const PORT = Number(process.env.PORT || process.env.HOME_STUDIO_PORT || 8787);
 const DATA = process.env.HOME_STUDIO_DATA || path.join(process.cwd(), 'data');
 const KEY = String(process.env.HOME_STUDIO_KEY || '');
 const ADMIN_KEY = String(process.env.HOME_STUDIO_ADMIN_KEY || '');
+
+// Write-open by accident is how a node ends up hosting strangers' writes:
+// running without a key is a deliberate choice, made with --allow-open.
+if (!KEY && !process.argv.includes('--allow-open')) {
+  console.error('[store] No HOME_STUDIO_KEY is set, so anyone who can reach this node could save designs. Set HOME_STUDIO_KEY, or pass --allow-open to run write-open on purpose.');
+  process.exit(1);
+}
 
 const GALLERY_DIR = path.join(DATA, 'gallery');
 const DESIGNS_DIR = path.join(DATA, 'designs');
@@ -82,8 +90,21 @@ const safeId = (raw) => {
 // Blob addresses are our own CIDs; anything else never touches disk.
 const isCid = (raw) => /^bafkrei[a-z2-7]{52}$/.test(String(raw || ''));
 
+// A key from a header is compared in constant time: a plain === leaks,
+// byte by byte, how much of the key a caller guessed right.
+const keyMatches = (sent, key) => {
+  const a = Buffer.from(String(sent || ''), 'utf8');
+  const b = Buffer.from(String(key || ''), 'utf8');
+  if (a.length !== b.length) return false;
+  return timingSafeEqual(a, b);
+};
+
 // The bearer key, when the node has one, guards every write.
-const allowedToWrite = (req) => !KEY || req.headers.authorization === 'Bearer ' + KEY;
+const allowedToWrite = (req) => {
+  if (!KEY) return true;
+  const header = String(req.headers.authorization || '');
+  return header.startsWith('Bearer ') && keyMatches(header.slice(7), KEY);
+};
 
 // Read a request body, refusing anything larger than the cap up front.
 const readBody = (req, cap) => new Promise((resolve, reject) => {
@@ -181,7 +202,15 @@ async function handleV1(req, res, pathname) {
 
 const server = http.createServer(async (req, res) => {
   if (cors(res, req)) return;
-  const pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+  let pathname;
+  try {
+    pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+  } catch (err) {
+    // A malformed escape in the address is the caller's mistake, not a
+    // fault of the node.
+    send(res, 400, { error: 'That address could not be read.' });
+    return;
+  }
   try {
     if (pathname === '/' && req.method === 'GET') {
       send(res, 200, 'This is a Home Studio node. Its API lives under /api/v1/ and /api/gallery.\n', 'text/plain');
@@ -195,7 +224,7 @@ const server = http.createServer(async (req, res) => {
     }
     if (pathname === '/api/gallery' || pathname.startsWith('/api/gallery/')) {
       const handled = await handleGallery(req, res, pathname, {
-        dir: GALLERY_DIR, adminKey: ADMIN_KEY, maxBytes: GALLERY_MAX_BYTES, log,
+        dir: GALLERY_DIR, adminKey: ADMIN_KEY, maxBytes: GALLERY_MAX_BYTES, log, keyMatches,
       });
       if (handled) return;
       send(res, 405, { error: 'That request method is not one this route answers.' });

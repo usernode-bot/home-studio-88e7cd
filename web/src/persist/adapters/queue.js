@@ -41,14 +41,20 @@ export async function clearDesign(db, designId) {
   }
 }
 
+// A row the store keeps refusing stops retrying after this many tries,
+// so one broken design cannot wedge the queue forever.
+export const MAX_OUTBOX_TRIES = 5;
+
 // Flush: send every row to the adapter, oldest first, one at a time.
 // A row that fails stays queued (tries grows); the rest keep going.
-// `send(row)` is the adapter call, provided by the sync engine. Resolves
-// { sent, failed }.
+// A row at the retry cap is skipped and stays in the outbox, where the
+// outbox list can clear it by hand. `send(row)` is the adapter call,
+// provided by the sync engine. Resolves { sent, failed }.
 export async function flushOutbox(db, send) {
   let sent = 0;
   let failed = 0;
   for (const row of await listOutbox(db)) {
+    if (row.tries >= MAX_OUTBOX_TRIES) continue;
     try {
       await send(row);
       await db.delete('outbox', row.id);

@@ -13,10 +13,13 @@
 //          flipX, flipY, natW, natH
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
+const HEX3 = /^#[0-9a-fA-F]{3}$/;
 
 export function hexToRgba(hex, alpha = 1) {
-  if (!HEX.test(hex || '')) return `rgba(0,0,0,${alpha})`;
-  const n = parseInt(hex.slice(1), 16);
+  let h = hex || '';
+  if (HEX3.test(h)) h = '#' + h[1] + h[1] + h[2] + h[2] + h[3] + h[3];
+  if (!HEX.test(h)) return `rgba(0,0,0,${alpha})`;
+  const n = parseInt(h.slice(1), 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${alpha})`;
 }
 
@@ -192,8 +195,9 @@ export function textStyles(el, family) {
 }
 
 function glowCss(s) {
+  const blur = Math.max(0, s.blur || 0);
   const c = hexToRgba(s.color, s.alpha ?? 0.9);
-  return `0 0 ${Math.round(s.blur / 3)}px ${c}, 0 0 ${s.blur}px ${c}`;
+  return `0 0 ${Math.round(blur / 3)}px ${c}, 0 0 ${blur}px ${c}`;
 }
 
 // One-tap text effects: each sets the effect fields it owns and clears

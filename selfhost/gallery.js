@@ -85,7 +85,7 @@ const rowFor = (id, envelope, bytes) => {
 
 // Returns true when the request was answered, false to fall through (a
 // method this route does not take).
-export async function handleGallery(req, res, pathname, { dir, adminKey, maxBytes, log }) {
+export async function handleGallery(req, res, pathname, { dir, adminKey, maxBytes, log, keyMatches }) {
   if (req.method === 'GET' && pathname === '/api/gallery') {
     send(res, 200, { items: await readIndex(dir) });
     return true;
@@ -105,7 +105,7 @@ export async function handleGallery(req, res, pathname, { dir, adminKey, maxByte
       send(res, 403, { error: 'This gallery does not accept publishes. Whoever runs the node sets HOME_STUDIO_ADMIN_KEY to turn moderation on.' });
       return true;
     }
-    if (req.headers['x-home-studio-admin'] !== adminKey) {
+    if (!keyMatches(req.headers['x-home-studio-admin'], adminKey)) {
       send(res, 401, { error: 'The admin key was not accepted by this gallery.' });
       return true;
     }

@@ -91,18 +91,20 @@ function Browse({ sources, source, onSource, items, loading, error, onRetry, onR
   const [addName, setAddName] = useState('');
   const [addError, setAddError] = useState('');
   const [parsed, setParsed] = useState(null); // the selected item's contents
+  const [detailError, setDetailError] = useState('');
   const [busy, setBusy] = useState(false);
 
   const open = async (row) => {
     setSelected(row);
     setParsed(null);
+    setDetailError('');
     setBusy(true);
     try {
       const got = await getItem(source, row.id, demoSource);
       setParsed(got);
     } catch (err) {
-      setError(err.message || 'That design could not be opened.');
-      setSelected(null);
+      // The listing stays up; the detail card alone says what failed.
+      setDetailError(err.message || 'That design could not be opened.');
     } finally {
       setBusy(false);
     }
@@ -179,6 +181,7 @@ function Browse({ sources, source, onSource, items, loading, error, onRetry, onR
               )}
               {parsed && parsed.item.description && <p className="sub">{parsed.item.description}</p>}
               {busy && <p className="sub">Opening…</p>}
+              {detailError && <p className="state-error" role="alert">{detailError}</p>}
               {parsed && parsed.warnings.length > 0 && <p className="sub">{parsed.warnings.join(' ')}</p>}
               <button className="btn-primary" style={{ marginTop: 8 }} disabled={!parsed || busy} data-gallery-remix onClick={remix}>
                 Make a copy to edit
@@ -268,12 +271,24 @@ function GalleryPreview({ parsed, width = 140 }) {
 
 // One fetch per item per dialog session: the tile and the detail panel
 // share it, and a second look at the same tile does not re-download.
+// Browsing holds whole designs, so the cache is capped: the least
+// recently seen item goes when a new one arrives.
+const ITEM_CACHE_MAX = 8;
 const itemCache = new Map();
 function getItem(source, id, demoSource) {
   const key = `${source && source.id}:${id}`;
-  if (itemCache.has(key)) return Promise.resolve(itemCache.get(key));
+  if (itemCache.has(key)) {
+    const hit = itemCache.get(key);
+    itemCache.delete(key);
+    itemCache.set(key, hit);
+    return Promise.resolve(hit);
+  }
   return fetchItem(source, id, { demoItem: demoSource ? demoSource.itemBytes : null })
-    .then((parsed) => { itemCache.set(key, parsed); return parsed; });
+    .then((parsed) => {
+      itemCache.set(key, parsed);
+      while (itemCache.size > ITEM_CACHE_MAX) itemCache.delete(itemCache.keys().next().value);
+      return parsed;
+    });
 }
 
 // ── Publish ──────────────────────────────────────────────────────────────

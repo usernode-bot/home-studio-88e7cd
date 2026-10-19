@@ -4,7 +4,7 @@
 // dumb, inspectable store. A bearer key guards writes when the node has
 // one; reads stay open, so another device only needs the address.
 
-import { readCapped, cleanConfig, cleanBaseUrl } from './interface.js';
+import { readCapped, cleanConfig, cleanBaseUrl, fetchTimed } from './interface.js';
 
 const FIELDS = [
   { key: 'url', label: 'Node address', placeholder: 'https://studio.example.com' },
@@ -31,23 +31,27 @@ export default {
     return out;
   },
   ping: async (cfg) => {
-    const res = await fetch(cfg.url + '/api/v1/ping', { headers: headers(cfg) });
+    const res = await fetchTimed(cfg.url + '/api/v1/ping', { headers: headers(cfg) });
+    // The ok check comes first: an error page is not JSON, and the status
+    // is the message worth keeping.
+    if (!res.ok) throw new Error('The node answered, but not as a Home Studio node (' + res.status + ').');
     const data = await res.json();
-    if (!res.ok || data.ok !== true) throw new Error('The node answered, but not as a Home Studio node.');
+    if (data.ok !== true) throw new Error('The node answered, but not as a Home Studio node.');
     return { ok: true, name: data.name || 'Home Studio node' };
   },
   list: async (cfg) => {
-    const res = await fetch(cfg.url + '/api/v1/designs', { headers: headers(cfg) });
+    const res = await fetchTimed(cfg.url + '/api/v1/designs', { headers: headers(cfg) });
+    if (!res.ok) throw new Error('The design list could not be read (' + res.status + ').');
     const data = await res.json();
-    if (!res.ok || !Array.isArray(data.designs)) throw new Error('The design list could not be read.');
+    if (!Array.isArray(data.designs)) throw new Error('The design list could not be read.');
     return data.designs.filter((d) => d && typeof d.id === 'string' && typeof d.updatedAt === 'number');
   },
   get: async (cfg, id) => {
-    const res = await fetch(cfg.url + '/api/v1/designs/' + encodeURIComponent(id), { headers: headers(cfg) });
+    const res = await fetchTimed(cfg.url + '/api/v1/designs/' + encodeURIComponent(id), { headers: headers(cfg) });
     return readCapped(res, 'The design');
   },
   put: async (cfg, id, bytes) => {
-    const res = await fetch(cfg.url + '/api/v1/designs/' + encodeURIComponent(id), {
+    const res = await fetchTimed(cfg.url + '/api/v1/designs/' + encodeURIComponent(id), {
       method: 'PUT', headers: headers(cfg, true), body: bytes,
     });
     if (!res.ok) throw new Error('The node refused the design (' + res.status + ').');
@@ -55,21 +59,21 @@ export default {
     return { updatedAt: typeof data.updatedAt === 'number' ? data.updatedAt : Date.now() };
   },
   delete: async (cfg, id) => {
-    const res = await fetch(cfg.url + '/api/v1/designs/' + encodeURIComponent(id), {
+    const res = await fetchTimed(cfg.url + '/api/v1/designs/' + encodeURIComponent(id), {
       method: 'DELETE', headers: headers(cfg),
     });
     if (!res.ok && res.status !== 404) throw new Error('The node refused to delete it (' + res.status + ').');
   },
   putBlob: async (cfg, bytes) => {
     const cid = (await import('../../io/cid.js')).cidOfBytes(bytes);
-    const res = await fetch(cfg.url + '/api/v1/blobs/' + cid, {
+    const res = await fetchTimed(cfg.url + '/api/v1/blobs/' + cid, {
       method: 'PUT', headers: headers(cfg, true), body: bytes,
     });
     if (!res.ok) throw new Error('The node refused the file (' + res.status + ').');
     return { cid };
   },
   getBlob: async (cfg, cid) => {
-    const res = await fetch(cfg.url + '/api/v1/blobs/' + encodeURIComponent(cid), { headers: headers(cfg) });
+    const res = await fetchTimed(cfg.url + '/api/v1/blobs/' + encodeURIComponent(cid), { headers: headers(cfg) });
     return readCapped(res, 'The file');
   },
 };

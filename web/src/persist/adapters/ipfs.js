@@ -4,7 +4,7 @@
 // Stores are content-addressed: put() returns the CID, and the sync layer
 // keeps the design-id-to-CID map (in prefs), because IPFS has no listing.
 
-import { readCapped, cleanConfig, cleanBaseUrl } from './interface.js';
+import { readCapped, cleanConfig, cleanBaseUrl, fetchTimed } from './interface.js';
 import { cidOfBytes } from '../../io/cid.js';
 
 const FIELDS = [
@@ -34,37 +34,49 @@ export default {
     return out;
   },
   ping: async (cfg) => {
-    const res = await fetch(url(cfg, '/id'));
+    const res = await fetchTimed(url(cfg, '/id'));
+    // The ok check comes first: an error page is not JSON, and the status
+    // is the message worth keeping.
+    if (!res.ok) throw new Error('That address did not answer as a Kubo RPC API (' + res.status + ').');
     const data = await res.json();
-    if (!res.ok || !data.ID) throw new Error('That address did not answer as a Kubo RPC API.');
+    if (!data.ID) throw new Error('That address did not answer as a Kubo RPC API.');
     return { ok: true, name: 'IPFS node ' + String(data.ID).slice(0, 8) };
   },
   // No listing on a content store: the CID map lives in this device's
   // prefs (see adapters/sync.js).
   get: async (cfg, cid) => {
-    const res = await fetch(url(cfg, '/cat', { arg: cid }));
+    const res = await fetchTimed(url(cfg, '/cat', { arg: cid }));
     return readCapped(res, 'The design');
   },
   put: async (cfg, _id, bytes) => {
     const cid = await cidOfBytes(bytes);
     const form = new FormData();
     form.append('file', new Blob([bytes]), cid);
-    const res = await fetch(url(cfg, '/add', { pin: cfg.pin ? 'true' : 'false', cidVersion: 1, rawLeaves: 'true' }), {
+    const res = await fetchTimed(url(cfg, '/add', { pin: cfg.pin ? 'true' : 'false', cidVersion: 1, rawLeaves: 'true' }), {
       method: 'POST', body: form,
     });
+    if (!res.ok) throw new Error('The IPFS node refused the design (' + res.status + ').');
     const data = await res.json();
-    if (!res.ok || !data.Hash) throw new Error('The IPFS node refused the design.');
+    if (!data.Hash) throw new Error('The IPFS node refused the design.');
     return { cid: data.Hash };
   },
   delete: async (cfg, cid) => {
-    await fetch(url(cfg, '/pin/rm', { arg: cid }), { method: 'POST' });
+    const res = await fetchTimed(url(cfg, '/pin/rm', { arg: cid }), { method: 'POST' });
+    if (res.ok) return;
+    // Unpinning something that was never pinned (a CID the node does not
+    // hold) already did what was asked: read the error to tell it from a
+    // real refusal.
+    let body = '';
+    try { body = await res.text(); } catch { /* body already gone */ }
+    if (/not pinned/i.test(body)) return;
+    throw new Error('The IPFS node refused to delete it (' + res.status + ').');
   },
   async putBlob(cfg, bytes) {
     const out = await this.put(cfg, null, bytes);
     return { cid: out.cid };
   },
   getBlob: async (cfg, cid) => {
-    const res = await fetch(url(cfg, '/cat', { arg: cid }));
+    const res = await fetchTimed(url(cfg, '/cat', { arg: cid }));
     return readCapped(res, 'The file');
   },
 };

@@ -4,7 +4,7 @@ import React, { useRef, useState } from 'react';
 import { icons } from './icons.jsx';
 import { boundsOfElement, TYPE_LABELS, findElement, measureTextHeight } from '../doc/model.js';
 import { StyleSections, BackgroundSection, NumField, ColorField } from './styleControls.jsx';
-import { updateElements, removeElements } from '../doc/store.js';
+import { updateElements, removeElements, pageDuplicate, touch } from '../doc/store.js';
 import { alignBoxes, distributeBoxes } from '../tools/align.js';
 
 const TYPE_ICONS = {
@@ -18,14 +18,16 @@ const TYPE_ICONS = {
   svg: icons.image,
 };
 
-// One layers row, draggable to reorder, double-tappable to rename.
+// One layers row, draggable to reorder, double-tappable to rename. Also
+// keyboard-reachable: Tab to it, Enter (or Space) selects, Enter again on
+// the selected row renames, Alt + arrow keys reorder.
 function LayerRow({ el, selected, index, total, onSelect, onReorder, onRename }) {
   const [renaming, setRenaming] = useState(false);
   const rowRef = useRef(null);
   const drag = useRef(null);
 
   const onPointerDown = (e) => {
-    if (e.button === 2) return;
+    if (e.button === 2 || renaming) return;
     drag.current = { id: el.id, index, startY: e.clientY, moved: false };
     const move = (ev) => {
       if (!drag.current) return;
@@ -34,6 +36,7 @@ function LayerRow({ el, selected, index, total, onSelect, onReorder, onRename })
     const up = (ev) => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
+      window.removeEventListener('pointercancel', up);
       const d = drag.current;
       drag.current = null;
       if (!d || !d.moved) return;
@@ -48,17 +51,39 @@ function LayerRow({ el, selected, index, total, onSelect, onReorder, onRename })
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
+    window.addEventListener('pointercancel', up);
+  };
+
+  const onKeyDown = (e) => {
+    if (renaming) {
+      if (e.key === 'Enter') { onRename(el.id, e.target.value); setRenaming(false); }
+      else if (e.key === 'Escape') setRenaming(false); // cancel: keep the old name
+      e.stopPropagation();
+      return;
+    }
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      if (selected) setRenaming(true);
+      else onSelect(el.id, e.shiftKey);
+    } else if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      e.preventDefault();
+      e.stopPropagation();
+      const target = index + (e.key === 'ArrowUp' ? -1 : 1);
+      if (target >= 0 && target < total) onReorder(el.id, target);
+    }
   };
 
   return (
     <li className={'list-row' + (selected ? ' on' : '')} data-lrow={el.id} ref={rowRef}
-      onPointerDown={onPointerDown}
-      onClick={(e) => onSelect(el.id, e.shiftKey)}
+      tabIndex={0} role="button" aria-pressed={selected}
+      aria-label={el.name + ', ' + (TYPE_LABELS[el.type] || 'Layer')}
+      onPointerDown={onPointerDown} onKeyDown={onKeyDown}
+      onClick={(e) => { if (!renaming) onSelect(el.id, e.shiftKey); }}
       onDoubleClick={() => setRenaming(true)}>
       {renaming ? (
         <input className="field" style={{ minHeight: 36, padding: '4px 8px' }} autoFocus defaultValue={el.name}
-          onBlur={(e) => { onRename(el.id, e.target.value); setRenaming(false); }}
-          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === 'Escape') { onRename(el.id, e.target.value); setRenaming(false); } e.stopPropagation(); }} />
+          aria-label={'Rename ' + el.name}
+          onBlur={(e) => { onRename(el.id, e.target.value); setRenaming(false); }} />
       ) : (
         <>
           {TYPE_ICONS[el.type] ? TYPE_ICONS[el.type]({}) : icons.select({})}
@@ -83,17 +108,7 @@ export function LayersPanel({ page, selection, dispatch, apply, total }) {
   };
   const rename = (id, name) => {
     if (!name.trim()) return;
-    apply((doc) => {
-      const walkUp = (els) => {
-        for (const el of els) {
-          if (el.id === id) { el.name = name.trim(); return true; }
-          if (el.children && walkUp(el.children)) return true;
-        }
-        return false;
-      };
-      const p = doc.pages.find((pp) => pp.id === page.id);
-      walkUp(p.elements);
-    }, true);
+    apply((doc) => updateElements(doc, page.id, [id], { name: name.trim() }), true);
   };
   return (
     <div className="panel layers" data-layers-panel>
@@ -165,6 +180,7 @@ export function Inspector({ state, dispatch, apply, page, onAddImage, imgError, 
       chosen.forEach((el, i) => {
         el.x += out[i].x - boxes[i].x;
         el.y += out[i].y - boxes[i].y;
+        touch(el);
       });
       doc.updatedAt = Date.now();
     }, true);
@@ -178,6 +194,7 @@ export function Inspector({ state, dispatch, apply, page, onAddImage, imgError, 
       chosen.forEach((el, i) => {
         el.x += out[i].x - boxes[i].x;
         el.y += out[i].y - boxes[i].y;
+        touch(el);
       });
       doc.updatedAt = Date.now();
     }, true);
@@ -197,21 +214,14 @@ export function Inspector({ state, dispatch, apply, page, onAddImage, imgError, 
             <label className="f"><b>Name</b><input className="num" value={page.name}
               onChange={(e) => apply((doc) => { doc.pages.find((p) => p.id === page.id).name = e.target.value; }, false)} />
             </label>
-            <ColorField label="Page" value={page.background} onCommit={(v) => apply((doc) => { doc.pages.find((p) => p.id === page.id).background = v; }, true)} />
+            <ColorField label="Page" value={page.background} onCommit={(v, first) => apply((doc) => { doc.pages.find((p) => p.id === page.id).background = v; }, first)} />
             <NumField label="W" value={page.width} onCommit={(v) => apply((doc) => { doc.pages.find((p) => p.id === page.id).width = Math.round(v); }, true)} />
             <NumField label="H" value={page.height} onCommit={(v) => apply((doc) => { doc.pages.find((p) => p.id === page.id).height = Math.round(v); }, true)} />
           </div></div>
           <BackgroundSection page={page} apply={apply} />
           <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
             <button className="btn-secondary" style={{ flex: 1 }} onClick={() => apply((doc) => {
-              const i = doc.pages.findIndex((p) => p.id === page.id);
-              const copy = structuredClone(doc.pages[i]);
-              copy.id = Math.random().toString(36).slice(2, 10);
-              copy.name = copy.name + ' copy';
-              for (const el of copy.elements) { el.id = Math.random().toString(36).slice(2, 10); (el.children || []).forEach((c) => (c.id = Math.random().toString(36).slice(2, 10))); }
-              for (const g of copy.guides) g.id = Math.random().toString(36).slice(2, 10);
-              doc.pages.splice(i + 1, 0, copy);
-              doc.updatedAt = Date.now();
+              pageDuplicate(doc, page.id);
             }, true)}>Duplicate page</button>
             <button className="btn-secondary" style={{ flex: 1 }} onClick={() => {
               if (page.elements.length > 0 && !window.confirm('Delete this page and everything on it?')) return;
