@@ -1,0 +1,11 @@
+{
+  "description": "A free, open-source design editor that runs in your browser",
+  "icon": {
+    "emoji": "🎨"
+  },
+  "secrets": [],
+  "governance": {
+    "preset": "you_or_the_group"
+  },
+  "tests": []
+}
