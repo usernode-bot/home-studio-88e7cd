@@ -13,8 +13,23 @@ import { uid } from '../../doc/model.js';
 // exactly what collectProject returns; serialization happens at flush
 // time so a format fix reaches queued rows too.
 
+// Rows queued in the same millisecond tie on `queuedAt`, and the store
+// hands them back in key order (their random ids), so which went first
+// was a coin flip. `seq` stamps insertion order at enqueue time and
+// settles that tie. Rows queued before this field existed have no `seq`;
+// they sort as -1 and keep the old id fallback.
+let nextSeq = 0;
+
+function queuedOrder(a, b) {
+  const byTime = a.queuedAt - b.queuedAt;
+  if (byTime) return byTime;
+  const bySeq = (a.seq ?? -1) - (b.seq ?? -1);
+  if (bySeq) return bySeq;
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
 export async function enqueue(db, kind, designId, payload) {
-  const row = { id: uid(), kind, designId, payload, queuedAt: Date.now(), tries: 0 };
+  const row = { id: uid(), kind, designId, payload, queuedAt: Date.now(), seq: ++nextSeq, tries: 0 };
   await db.put('outbox', row);
   return row;
 }
@@ -22,7 +37,7 @@ export async function enqueue(db, kind, designId, payload) {
 export async function listOutbox(db) {
   if (!db) return [];
   const rows = await db.getAll('outbox');
-  return rows.sort((a, b) => a.queuedAt - b.queuedAt);
+  return rows.sort(queuedOrder);
 }
 
 export async function outboxCount(db) {
