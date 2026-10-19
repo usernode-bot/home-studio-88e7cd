@@ -6,6 +6,7 @@ COPY package.json package-lock.json ./
 RUN npm ci --include=dev
 COPY vite.config.js postcss.config.js tailwind.config.js vitest.config.js ./
 COPY styles ./styles
+COPY build ./build
 COPY web ./web
 COPY public ./public
 RUN npm run build

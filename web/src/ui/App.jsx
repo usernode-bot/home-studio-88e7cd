@@ -1,26 +1,40 @@
 // The app shell: header, toolbar, page tabs, the canvas, the two panels,
 // the dialogs, keyboard shortcuts, autosave wiring and the loading,
-// empty and storage-error states.
+// empty and storage-error states. Phase 3 adds the File menu (export,
+// opening files, project files, version history, backup and storage),
+// crash recovery and the storage warnings.
 
 import React, { Suspense, lazy, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import Canvas from '../render/Canvas.jsx';
 import { LayersPanel, Inspector } from './panels.jsx';
 import { NewDesignDialog, DesignsSheet } from './dialogs.jsx';
+import { FileMenu, VersionsDialog, BackupDialog } from './fileDialogs.jsx';
 import { icons } from './icons.jsx';
 import {
   docReducer, initialDocState, pageOf, addElements, moveElements, removeElements, updateElements,
   duplicateSelection, groupSelection, ungroupSelection, pageAdd,
 } from '../doc/store.js';
-import { newDesign, newElement, uid, measureTextHeight, imageIdsIn, unionBoxes, boundsOfElement } from '../doc/model.js';
 import {
-  openDesignsDb, listDesigns, putDesign, deleteDesign, putImage, getImage, createAutoSaver, duplicateDesign,
+  newDesign, newPage, newElement, uid, measureTextHeight, imageIdsIn, unionBoxes, boundsOfElement, PAGE_MAX, PAGE_MIN,
+} from '../doc/model.js';
+import {
+  openDesignsDb, listDesigns, putDesign, getDesign, deleteDesign, putImage, getImage, createAutoSaver, duplicateDesign,
   listAssets, putAsset, deleteAsset, getFavorites, setFavorite, listComponents, saveComponent, deleteComponent,
-  componentElements,
+  componentElements, listVersions, addVersion, autoVersionDue, collectProject, collectBackup, importProject,
+  restoreBackup, getPref, setPref,
 } from '../persist/db.js';
+import { writeJournal, readJournal, clearJournal, recoveryOffer } from '../persist/recovery.js';
+import { storageStatus, askToPersist, isQuotaError } from '../persist/storage.js';
+import {
+  parseHomeStudioFile, serializeProject, serializeBackup, freshCopy, PROJECT_SUFFIX, BACKUP_SUFFIX,
+} from '../io/project.js';
+import { safeFileName } from '../io/binary.js';
+import { downloadBlob } from '../io/download.js';
 import { ensureFont, fontsUsed, registerUserFont, forgetUserFont } from '../assets/fonts.js';
 import {
-  assetFromFile, classifyFile, elementForItem, applyBackground, placeOnPage,
+  assetFromFile, classifyFile, elementForItem, applyBackground, placeOnPage, IMAGE_ACCEPT, baseName,
 } from '../assets/imports.js';
+import { svgSize } from '../assets/svg.js';
 import { buildDemoDesigns } from '../demo.js';
 import { shortcutFor, arrowDelta } from '../tools/shortcuts.js';
 
@@ -35,6 +49,16 @@ const TOOLS = [
 // The library is its own chunk: its catalog, templates and previews load
 // the first time someone opens it.
 const Library = lazy(() => import('./Library.jsx'));
+// The exporters load the first time someone exports, pdf.js the first time
+// a PDF is opened.
+const ExportDialog = lazy(() => import('./ExportDialog.jsx'));
+const loadPdfImport = () => import('../import/pdf.js');
+
+const OPEN_ACCEPT = `${IMAGE_ACCEPT},image/svg+xml,.svg,application/pdf,.pdf,application/json,.json`;
+const isPdfFileName = (f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name || '');
+const isJsonFile = (f) => /json/.test(f.type || '') || /\.json$/i.test(f.name || '');
+const STORAGE_CHECK_MS = 2 * 60 * 1000;
+const journalStore = () => { try { return window.localStorage; } catch { return null; } };
 const loadTemplates = () => import('../assets/templates.js');
 
 const isLibraryHash = () => /^#library\b/.test(window.location.hash);
@@ -49,7 +73,30 @@ const importChecks = {
     img.src = url;
   }),
   font: (asset) => registerUserFont(asset),
+  // Formats not every browser shows (AVIF, BMP, HEIC, TIFF) are redrawn as PNG.
+  toPng: (file) => new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const c = document.createElement('canvas');
+      c.width = img.naturalWidth;
+      c.height = img.naturalHeight;
+      c.getContext('2d').drawImage(img, 0, 0);
+      c.toBlob((blob) => (blob ? resolve({ blob, w: c.width, h: c.height }) : reject(new Error('encode'))), 'image/png');
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('decode')); };
+    img.src = url;
+  }),
 };
+
+// A page size that fits an image of w × h inside the page limits.
+function pageSizeFor(w, h) {
+  const shrink = Math.min(1, PAGE_MAX / Math.max(w, h));
+  const grow = Math.max(1, PAGE_MIN / Math.min(w, h));
+  const s = shrink < 1 ? shrink : grow;
+  return { width: Math.min(PAGE_MAX, Math.max(PAGE_MIN, Math.round(w * s))), height: Math.min(PAGE_MAX, Math.max(PAGE_MIN, Math.round(h * s))) };
+}
 
 export default function App() {
   const [state, dispatch] = useReducer(docReducer, undefined, initialDocState);
@@ -69,9 +116,27 @@ export default function App() {
   const [uploads, setUploads] = useState([]);
   const [components, setComponents] = useState([]);
   const [importError, setImportError] = useState('');
+  const [fileMenu, setFileMenu] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [versionsOpen, setVersionsOpen] = useState(false);
+  const [backupOpen, setBackupOpen] = useState(null); // null, or { restore: parsed backup | null }
+  const [notice, setNotice] = useState(null); // { tone: 'info' | 'error', text }
+  const [recovery, setRecovery] = useState(null); // a design offered back after a crash
+  const [quota, setQuota] = useState({ level: 'ok', dismissed: false });
+  const [online, setOnline] = useState(() => (typeof navigator === 'undefined' ? true : navigator.onLine !== false));
+  const [lastBackupAt, setLastBackupAt] = useState(null);
   const apiRef = useRef(null);
   const fileRef = useRef(null);
+  const openRef = useRef(null);
   const dbLive = useRef(null);
+  const dbName = useRef('home-studio');
+  const lastVersions = useRef({});
+  const storageCheckedAt = useRef(0);
+  const noticeTimer = useRef(null);
+  const recoveryRef = useRef(null);
+  recoveryRef.current = recovery;
+  const imagesRef = useRef(images);
+  imagesRef.current = images;
   const stateRef = useRef(state);
   stateRef.current = state;
 
@@ -121,9 +186,19 @@ export default function App() {
     } catch { /* offline or plain local run: no demo */ }
     const useDemo = staging && new URLSearchParams(window.location.search).get('demo') === '1';
     setDemo(useDemo);
+    dbName.current = useDemo ? 'home-studio-demo' : 'home-studio';
     try {
       const db = await openDesignsDb(useDemo);
       dbLive.current = db;
+      // A copy of unsaved work left by a crash or a closed tab.
+      const journal = journalStore() && readJournal(journalStore(), dbName.current);
+      if (journal) {
+        const offer = recoveryOffer(journal, await getDesign(db, journal.doc.id));
+        if (offer) setRecovery(offer);
+        else clearJournal(journalStore(), dbName.current, null);
+      }
+      setLastBackupAt((await getPref(db, 'lastBackupAt').catch(() => null)) || null);
+      void storageStatus().then((st) => { if (st && st.level !== 'ok') setQuota({ level: st.level, dismissed: false }); });
       if (useDemo && !(await listDesigns(db)).length) {
         for (const d of buildDemoDesigns()) await putDesign(db, d);
       }
@@ -150,13 +225,28 @@ export default function App() {
 
   // ── Autosave: debounced 800 ms after each change ──────────────────────
   const autoSaver = useMemo(() => createAutoSaver(async (d) => {
-    if (!dbLive.current) { setSaveState('error'); return; }
+    const db = dbLive.current;
+    if (!db) { setSaveState('error'); return; }
     try {
-      await putDesign(dbLive.current, d);
+      await putDesign(db, d);
       setSaveState('saved');
+      if (!recoveryRef.current && journalStore()) clearJournal(journalStore(), dbName.current, d);
       void refreshList();
-    } catch {
+    } catch (err) {
       setSaveState('error');
+      if (isQuotaError(err)) setQuota({ level: 'full', dismissed: false });
+      return;
+    }
+    // An automatic version every 10 minutes of changes.
+    try {
+      const lv = lastVersions.current;
+      if (!(d.id in lv)) lv[d.id] = (await listVersions(db, d.id))[0] || null;
+      if (autoVersionDue(d, lv[d.id])) lv[d.id] = await addVersion(db, d, 'Autosaved', true);
+    } catch { /* the design itself is saved */ }
+    if (Date.now() - storageCheckedAt.current > STORAGE_CHECK_MS) {
+      storageCheckedAt.current = Date.now();
+      const st = await storageStatus();
+      if (st) setQuota((q) => (q.level === st.level ? q : { level: st.level, dismissed: false }));
     }
   }), [refreshList]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -165,6 +255,36 @@ export default function App() {
     setSaveState('saving');
     autoSaver.schedule(state.doc);
   }, [state.doc, phase, autoSaver]);
+
+  // Crash recovery: every change is copied to localStorage at once (within
+  // 300 ms), and cleared when the autosave lands. Paused while a recovered
+  // copy is waiting for a decision, so it isn't overwritten.
+  useEffect(() => {
+    if (phase !== 'ready' || !state.doc || recovery || !journalStore()) return undefined;
+    const t = setTimeout(() => writeJournal(journalStore(), dbName.current, state.doc), 300);
+    return () => clearTimeout(t);
+  }, [state.doc, phase, recovery]);
+
+  // Save straight away when the page is hidden or closed.
+  useEffect(() => {
+    const flush = () => {
+      const st = stateRef.current;
+      if (st.doc && !recoveryRef.current && journalStore()) writeJournal(journalStore(), dbName.current, st.doc);
+      void autoSaver.flush().catch(() => {});
+    };
+    const onVis = () => { if (document.visibilityState === 'hidden') flush(); };
+    window.addEventListener('pagehide', flush);
+    document.addEventListener('visibilitychange', onVis);
+    return () => { window.removeEventListener('pagehide', flush); document.removeEventListener('visibilitychange', onVis); };
+  }, [autoSaver]);
+
+  useEffect(() => {
+    const on = () => setOnline(true);
+    const off = () => setOnline(false);
+    window.addEventListener('online', on);
+    window.addEventListener('offline', off);
+    return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off); };
+  }, []);
 
   // ── Designs: create, open, rename, delete ─────────────────────────────
   const createNew = useCallback(async ({ name, width, height }) => {
@@ -376,6 +496,218 @@ export default function App() {
     if (copy) await open(copy);
   }, [open, refreshList]);
 
+  // ── File: notices, opening files, project files, backup, versions ─────
+  const showNotice = useCallback((tone, text, keep) => {
+    clearTimeout(noticeTimer.current);
+    setNotice(text ? { tone, text } : null);
+    if (text && !keep) noticeTimer.current = setTimeout(() => setNotice(null), tone === 'error' ? 10000 : 6000);
+  }, []);
+
+  // Reads an image blob or an imported font from this device, or from what
+  // the open design holds when storage is broken.
+  const fileAccess = useMemo(() => ({
+    getImage: async (id) => {
+      if (dbLive.current) { const b = await getImage(dbLive.current, id); if (b) return b; }
+      const url = imagesRef.current[id];
+      return url ? (await fetch(url)).blob() : null;
+    },
+    getAsset: async (id) => (dbLive.current ? dbLive.current.get('assets', id) : null),
+    getFontBlob: async (id) => (dbLive.current ? ((await dbLive.current.get('assets', id)) || {}).blob || null : null),
+  }), []);
+
+  // Open a design that came from a file: store it and its images, then show it.
+  const openImported = useCallback(async (design, images) => {
+    const urls = {};
+    for (const img of images) {
+      const blob = img.blob || new Blob([img.bytes], { type: img.type });
+      if (dbLive.current) { try { await putImage(dbLive.current, img.id, blob); } catch { /* shows until reload */ } }
+      urls[img.id] = URL.createObjectURL(blob);
+    }
+    try { if (dbLive.current) await putDesign(dbLive.current, design); } catch { /* keep editing */ }
+    await open(design);
+    setImages((m) => ({ ...m, ...urls }));
+    void refreshList();
+  }, [open, refreshList]);
+
+  const openProjectFile = useCallback(async (parsed) => {
+    let design;
+    if (dbLive.current) {
+      design = await importProject(dbLive.current, parsed);
+      await open(design);
+      await refreshLibrary().catch(() => {});
+      void refreshList();
+    } else {
+      const copy = freshCopy(parsed);
+      design = copy.design;
+      await openImported(design, copy.images);
+    }
+    showNotice('info', [`Opened "${design.name}".`, ...parsed.warnings].join(' '));
+  }, [open, openImported, refreshLibrary, refreshList, showNotice]);
+
+  const openPdfFile = useCallback(async (file) => {
+    showNotice('info', `Opening ${file.name}…`, true);
+    const { openPdf, PDF_MAX_PAGES } = await loadPdfImport();
+    const pdf = await openPdf(new Uint8Array(await file.arrayBuffer()));
+    try {
+      if (pdf.projectText) {
+        try {
+          const parsed = parseHomeStudioFile(pdf.projectText);
+          if (parsed.kind === 'project') { await openProjectFile(parsed); return; }
+        } catch { /* open its pages as pictures instead */ }
+      }
+      const count = Math.min(pdf.pageCount, PDF_MAX_PAGES);
+      const design = newDesign(baseName(file.name), 1080, 1080);
+      design.pages = [];
+      const images = [];
+      for (let n = 1; n <= count; n++) {
+        showNotice('info', `Opening page ${n} of ${count}…`, true);
+        const r = await pdf.renderPage(n);
+        const id = uid();
+        images.push({ id, blob: r.blob });
+        const pg = newPage(`Page ${n}`, r.width, r.height);
+        pg.elements.push(newElement('image', { x: 0, y: 0, w: r.width, h: r.height }, { imageId: id, name: `PDF page ${n}`, natW: r.natW, natH: r.natH }));
+        design.pages.push(pg);
+      }
+      await openImported(design, images);
+      showNotice('info', `Opened "${design.name}". Its pages are pictures, so their text can't be edited, but you can add to them.`
+        + (pdf.pageCount > count ? ` Only the first ${count} of ${pdf.pageCount} pages were opened.` : ''));
+    } finally {
+      pdf.close();
+    }
+  }, [openImported, openProjectFile, showNotice]);
+
+  // An image or SVG opened as a new design at its own size.
+  const openPictureFile = useCallback(async (file) => {
+    const asset = await assetFromFile(file, importChecks);
+    if (asset.kind === 'font') throw new Error('Fonts are imported from the library, under Your files.');
+    const { width, height } = pageSizeFor(asset.w || svgSize(asset.svg).w, asset.h || svgSize(asset.svg).h);
+    const design = newDesign(asset.name, width, height);
+    const box = { x: 0, y: 0, w: width, h: height };
+    if (asset.kind === 'image') {
+      const id = uid();
+      design.pages[0].elements.push(newElement('image', box, { imageId: id, name: asset.name, natW: asset.w, natH: asset.h }));
+      await openImported(design, [{ id, blob: asset.blob }]);
+    } else {
+      design.pages[0].elements.push(elementForItem({ kind: 'svg', name: asset.name, asset }, design.pages[0]));
+      Object.assign(design.pages[0].elements[0], box);
+      await openImported(design, []);
+    }
+    showNotice('info', `Opened "${design.name}" as a new design.`);
+  }, [openImported, showNotice]);
+
+  const openFiles = useCallback(async (files) => {
+    setFileMenu(false);
+    for (const file of files) {
+      try {
+        if (isPdfFileName(file)) await openPdfFile(file);
+        else if (isJsonFile(file)) {
+          const parsed = parseHomeStudioFile(await file.text());
+          if (parsed.kind === 'backup') setBackupOpen({ restore: parsed });
+          else await openProjectFile(parsed);
+        } else if (classifyFile(file)) await openPictureFile(file);
+        else throw new Error(`${file.name} isn't a file Home Studio can open. It opens images, SVGs, PDFs and Home Studio files.`);
+      } catch (err) {
+        showNotice('error', err && err.message ? err.message : `${file.name} couldn't be opened.`);
+      }
+    }
+  }, [openPdfFile, openProjectFile, openPictureFile, showNotice]);
+
+  const downloadProject = useCallback(async () => {
+    setFileMenu(false);
+    const d = stateRef.current.doc;
+    if (!d) return;
+    try {
+      const bytes = serializeProject(await collectProject(d, fileAccess));
+      const name = safeFileName(d.name) + PROJECT_SUFFIX;
+      downloadBlob(new Blob([bytes], { type: 'application/json' }), name);
+      showNotice('info', `Downloaded ${name}. Open it from File, Open a file, here or on another device.`);
+    } catch {
+      showNotice('error', "The project file couldn't be made. Your design is unchanged.");
+    }
+  }, [fileAccess, showNotice]);
+
+  const runBackup = useCallback(async () => {
+    const db = dbLive.current;
+    if (!db) throw new Error('no storage');
+    await autoSaver.flush().catch(() => {});
+    const data = await collectBackup(db);
+    const bytes = serializeBackup(data);
+    const name = `Home Studio backup ${new Date().toISOString().slice(0, 10)}${BACKUP_SUFFIX}`;
+    downloadBlob(new Blob([bytes], { type: 'application/json' }), name);
+    const now = Date.now();
+    await setPref(db, 'lastBackupAt', now).catch(() => {});
+    setLastBackupAt(now);
+    return { name, size: bytes.length, designs: data.designs.length };
+  }, [autoSaver]);
+
+  const readBackupFile = useCallback(async (file) => {
+    const parsed = parseHomeStudioFile(await file.text());
+    if (parsed.kind !== 'backup') throw new Error('This file is one design, not a backup. Open it from File, Open a file.');
+    return parsed;
+  }, []);
+
+  const runRestore = useCallback(async (parsed) => {
+    const db = dbLive.current;
+    if (!db) throw new Error('no storage');
+    await autoSaver.flush().catch(() => {});
+    const r = await restoreBackup(db, parsed);
+    await refreshList();
+    await refreshLibrary().catch(() => {});
+    const cur = stateRef.current.doc;
+    const list = await listDesigns(db);
+    if (cur && parsed.designs.some((d) => d.id === cur.id) && r.replaced) {
+      const fresh = await getDesign(db, cur.id);
+      if (fresh) await open(fresh);
+    } else if (!cur && list.length) {
+      await open(list[0]);
+    }
+    return r;
+  }, [autoSaver, open, refreshList, refreshLibrary]);
+
+  const loadVersions = useCallback(async () => {
+    if (!dbLive.current) throw new Error('no storage');
+    return listVersions(dbLive.current, stateRef.current.doc.id);
+  }, []);
+
+  const saveVersion = useCallback(async (label) => {
+    const d = stateRef.current.doc;
+    lastVersions.current[d.id] = await addVersion(dbLive.current, d, label, false);
+  }, []);
+
+  const restoreVersion = useCallback(async (v) => {
+    const db = dbLive.current;
+    const d = stateRef.current.doc;
+    lastVersions.current[d.id] = await addVersion(db, d, 'Before going back', false);
+    const map = {};
+    for (const p of v.design.pages) {
+      for (const id of imageIdsIn(p.elements)) {
+        if (imagesRef.current[id]) continue;
+        const blob = await getImage(db, id);
+        if (blob) map[id] = URL.createObjectURL(blob);
+      }
+    }
+    setImages((m) => ({ ...m, ...map }));
+    apply((dr) => { dr.pages = structuredClone(v.design.pages); dr.name = v.design.name; dr.updatedAt = Date.now(); }, true);
+    dispatch({ type: 'set-page', pageId: v.design.pages[0].id });
+    setVersionsOpen(false);
+    showNotice('info', `Went back to the version from ${new Date(v.createdAt).toLocaleString()}. Undo brings back what you had.`);
+  }, [apply, showNotice]);
+
+  const restoreRecovered = useCallback(async () => {
+    const doc = recovery;
+    setRecovery(null);
+    try { if (dbLive.current) await putDesign(dbLive.current, doc); } catch { /* still opens */ }
+    if (journalStore()) clearJournal(journalStore(), dbName.current, doc);
+    await open(doc);
+    void refreshList();
+    showNotice('info', `Restored your latest changes to "${doc.name}".`);
+  }, [recovery, open, refreshList, showNotice]);
+
+  const discardRecovered = useCallback(() => {
+    if (journalStore()) clearJournal(journalStore(), dbName.current, null);
+    setRecovery(null);
+  }, []);
+
   // Bundled fonts load the first time a page uses them.
   const pageFonts = page ? fontsUsed([page]).join(',') : '';
   useEffect(() => {
@@ -387,7 +719,7 @@ export default function App() {
     const onKey = (e) => {
       const t = e.target;
       if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t.isContentEditable) return;
-      if (document.querySelector('[data-library]')) return; // the library has its own keys
+      if (document.querySelector('.dialog-scrim')) return; // dialogs have their own keys
       const st = stateRef.current;
       const p = st.doc ? st.doc.pages.find((pp) => pp.id === st.pageId) : null;
       if (!p) return;
@@ -493,7 +825,8 @@ export default function App() {
     dispatch({ type: 'set-page', pageId: id });
   };
 
-  const statusText = dbBroken ? 'Not saved' : saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Not saved' : 'saved on this device';
+  const statusText = (dbBroken ? 'Not saved' : saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Not saved' : 'saved on this device')
+    + (online ? '' : ', offline');
 
   // ── Loading state ─────────────────────────────────────────────────────
   if (phase === 'loading') {
@@ -531,6 +864,7 @@ export default function App() {
           <div className="sub">{doc ? `${doc.name}, ${statusText}` : dbBroken ? 'Not saved' : 'Designs are saved on this device'}</div>
         </div>
         <span style={{ flex: 1 }} />
+        <button className="ib" aria-label="File: export, open, versions and backup" title="File" onClick={() => setFileMenu(true)} data-open-file-menu>{icons.file({})}</button>
         <button className="ib" aria-label="Undo" disabled={!state.past.length} onClick={() => dispatch({ type: 'undo' })}>{icons.undo({})}</button>
         <button className="ib" aria-label="Redo" disabled={!state.future.length} onClick={() => dispatch({ type: 'redo' })}>{icons.redo({})}</button>
       </div>
@@ -543,6 +877,33 @@ export default function App() {
       {demo && (
         <div className="sub" data-usernode-demo-note style={{ padding: '8px 16px' }}>
           Staging demo: sample designs, kept apart from your own.
+        </div>
+      )}
+      {recovery && (
+        <div className="notice" role="alert" data-recovery>
+          <span>Home Studio closed before your latest changes to "{recovery.name}" were saved.</span>
+          <span className="notice-actions">
+            <button className="btn-secondary" onClick={discardRecovered}>Discard</button>
+            <button className="btn-secondary" onClick={restoreRecovered}>Restore changes</button>
+          </span>
+        </div>
+      )}
+      {quota.level !== 'ok' && !quota.dismissed && (
+        <div className="notice error" role="alert" data-quota>
+          <span>
+            {quota.level === 'full' ? 'This device is out of space for designs, so changes may not save.' : 'This device is running low on space for designs.'}
+            {' '}Back up your designs, then delete ones you no longer need.
+          </span>
+          <span className="notice-actions">
+            <button className="btn-secondary" onClick={() => setQuota((q) => ({ ...q, dismissed: true }))}>Dismiss</button>
+            <button className="btn-secondary" onClick={() => setBackupOpen({ restore: null })}>Back up</button>
+          </span>
+        </div>
+      )}
+      {notice && (
+        <div className={'notice' + (notice.tone === 'error' ? ' error' : '')} role={notice.tone === 'error' ? 'alert' : 'status'} data-notice>
+          <span>{notice.text}</span>
+          <span className="notice-actions"><button className="btn-secondary" onClick={() => showNotice(null, '')}>Dismiss</button></span>
         </div>
       )}
       <div className="toolbar" role="toolbar" aria-label="Tools">
@@ -591,6 +952,7 @@ export default function App() {
               <p className="sub">Make a design at a size you set, then add text, shapes and images.</p>
               <button className="btn-primary" onClick={() => setNewDialog(true)}>New design</button>
               <button className="btn-secondary" onClick={openLibrary}>Start from a template</button>
+              <button className="btn-secondary" onClick={() => openRef.current && openRef.current.click()}>Open a file</button>
             </div>
           )}
         </div>
@@ -606,7 +968,32 @@ export default function App() {
             onSaveComponent={saveAsComponent} />
         </div>
       )}
-      <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml,.svg" multiple hidden onChange={onFile} />
+      <input ref={fileRef} type="file" accept={`${IMAGE_ACCEPT},image/svg+xml,.svg`} multiple hidden onChange={onFile} />
+      <input ref={openRef} type="file" accept={OPEN_ACCEPT} multiple hidden data-open-input
+        onChange={(e) => { const files = [...(e.target.files || [])]; e.target.value = ''; if (files.length) void openFiles(files); }} />
+      {fileMenu && (
+        <FileMenu hasDesign={!empty} onClose={() => setFileMenu(false)}
+          onExport={() => { setFileMenu(false); setExportOpen(true); }}
+          onOpenFile={() => openRef.current && openRef.current.click()}
+          onDownloadProject={downloadProject}
+          onVersions={() => { setFileMenu(false); setVersionsOpen(true); }}
+          onBackup={() => { setFileMenu(false); setBackupOpen({ restore: null }); }} />
+      )}
+      {exportOpen && doc && p2 && (
+        <Suspense fallback={<div className="dialog-scrim"><div className="dialog card wide" aria-busy="true"><div className="skeleton" style={{ height: 28, width: 120 }} /></div></div>}>
+          <ExportDialog design={doc} pageId={p2.id} onClose={() => setExportOpen(false)} onDownload={downloadBlob}
+            deps={{ getImage: fileAccess.getImage, getFontBlob: fileAccess.getFontBlob, project: () => collectProject(stateRef.current.doc, fileAccess) }} />
+        </Suspense>
+      )}
+      {versionsOpen && doc && (
+        <VersionsDialog designName={doc.name} images={images} load={loadVersions} onSave={saveVersion} onRestore={restoreVersion}
+          onClose={() => setVersionsOpen(false)} />
+      )}
+      {backupOpen && (
+        <BackupDialog lastBackupAt={lastBackupAt} initialRestore={backupOpen.restore} loadStorage={storageStatus}
+          onBackup={runBackup} onReadBackup={readBackupFile} onRestore={runRestore} onPersist={askToPersist}
+          onClose={() => setBackupOpen(null)} />
+      )}
       {sheet && doc && (
         <DesignsSheet designs={designs} currentId={doc.id} onClose={() => setSheet(false)}
           onOpen={async (d) => { setSheet(false); await open(d); }}

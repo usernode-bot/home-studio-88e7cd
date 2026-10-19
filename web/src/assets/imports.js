@@ -6,24 +6,36 @@ import { uid, newElement } from '../doc/model.js';
 import { sanitizeSvg, svgSize, isRecolorable } from './svg.js';
 import { FONT_FILE } from './fonts.js';
 
+// Images stored as they are, and other formats the browser may be able to
+// open (AVIF, BMP, icons, HEIC on Apple devices, TIFF in Safari), which are
+// turned into PNG on the way in so every browser and every export can draw them.
 export const IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+export const CONVERT_TYPES = ['image/avif', 'image/bmp', 'image/x-ms-bmp', 'image/x-icon', 'image/vnd.microsoft.icon', 'image/heic', 'image/heif', 'image/tiff'];
+const KEEP_EXT = /\.(png|jpe?g|gif|webp)$/i;
+const CONVERT_EXT = /\.(avif|bmp|ico|heic|heif|tiff?)$/i;
 export const IMAGE_MAX_BYTES = 20 * 1024 * 1024;
 export const FONT_MAX_BYTES = 10 * 1024 * 1024;
-export const IMPORT_ACCEPT = 'image/png,image/jpeg,image/gif,image/webp,image/svg+xml,.svg,.ttf,.otf,.woff,.woff2';
+export const IMAGE_ACCEPT = [...IMAGE_TYPES, ...CONVERT_TYPES, '.avif', '.bmp', '.ico', '.heic', '.heif', '.tif', '.tiff'].join(',');
+export const IMPORT_ACCEPT = `${IMAGE_ACCEPT},image/svg+xml,.svg,.ttf,.otf,.woff,.woff2`;
 
 export function classifyFile(file) {
   const name = file.name || '';
   if (file.type === 'image/svg+xml' || /\.svg$/i.test(name)) return 'svg';
   if (FONT_FILE.test(name) || /^font\//.test(file.type || '')) return 'font';
-  if (IMAGE_TYPES.includes(file.type) || /\.(png|jpe?g|gif|webp)$/i.test(name)) return 'image';
+  if (IMAGE_TYPES.includes(file.type) || KEEP_EXT.test(name)) return 'image';
+  if (CONVERT_TYPES.includes(file.type) || CONVERT_EXT.test(name)) return 'image';
   return null;
 }
+
+// Whether an image file is turned into PNG on import.
+export const needsConversion = (file) => !IMAGE_TYPES.includes(file.type) && !KEEP_EXT.test(file.name || '');
 
 export const baseName = (name) => (name || '').replace(/\.[^.]+$/, '').trim() || 'Untitled';
 
 // Resolves an asset ready to store, or rejects with a message to show.
-// `checks.imageSize(file)` resolves { w, h } or rejects; `checks.font(asset)`
-// resolves once the browser has loaded the font, or rejects.
+// `checks.imageSize(file)` resolves { w, h } or rejects; `checks.toPng(file)`
+// resolves { blob, w, h } (the image redrawn as PNG) or rejects;
+// `checks.font(asset)` resolves once the browser has loaded the font, or rejects.
 export async function assetFromFile(file, checks) {
   const kind = classifyFile(file);
   const name = baseName(file.name);
@@ -35,6 +47,15 @@ export async function assetFromFile(file, checks) {
   }
   if (kind === 'image') {
     if (file.size > IMAGE_MAX_BYTES) throw new Error(`${file.name} is larger than 20 MB.`);
+    if (needsConversion(file)) {
+      let png;
+      try {
+        png = await checks.toPng(file);
+      } catch {
+        throw new Error(`${file.name} isn't an image this browser can open. Save it as PNG or JPEG, then try again.`);
+      }
+      return Object.assign(asset, { blob: png.blob, w: png.w, h: png.h });
+    }
     let size;
     try {
       size = await checks.imageSize(file);

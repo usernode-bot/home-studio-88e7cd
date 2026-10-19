@@ -31,7 +31,7 @@ describe('database', () => {
     v1.close();
     const db = await openDesignsDb(false, name);
     expect((await listDesigns(db)).map((d) => d.name)).toEqual(['Old']);
-    expect([...db.objectStoreNames].sort()).toEqual(['assets', 'components', 'designs', 'images', 'prefs']);
+    expect([...db.objectStoreNames].sort()).toEqual(['assets', 'components', 'designs', 'images', 'prefs', 'versions']);
   });
 
   it('duplicates a design with new ids and its own image copies', async () => {
