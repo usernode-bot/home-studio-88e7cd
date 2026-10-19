@@ -2,19 +2,25 @@
 // the dialogs, keyboard shortcuts, autosave wiring and the loading,
 // empty and storage-error states.
 
-import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import React, { Suspense, lazy, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import Canvas from '../render/Canvas.jsx';
 import { LayersPanel, Inspector } from './panels.jsx';
 import { NewDesignDialog, DesignsSheet } from './dialogs.jsx';
 import { icons } from './icons.jsx';
 import {
-  docReducer, initialDocState, pageOf, addElements, moveElements, removeElements,
+  docReducer, initialDocState, pageOf, addElements, moveElements, removeElements, updateElements,
   duplicateSelection, groupSelection, ungroupSelection, pageAdd,
 } from '../doc/store.js';
-import { newDesign, newElement, uid, measureTextHeight } from '../doc/model.js';
+import { newDesign, newElement, uid, measureTextHeight, imageIdsIn, unionBoxes, boundsOfElement } from '../doc/model.js';
 import {
-  openDesignsDb, listDesigns, putDesign, deleteDesign, putImage, getImage, createAutoSaver,
+  openDesignsDb, listDesigns, putDesign, deleteDesign, putImage, getImage, createAutoSaver, duplicateDesign,
+  listAssets, putAsset, deleteAsset, getFavorites, setFavorite, listComponents, saveComponent, deleteComponent,
+  componentElements,
 } from '../persist/db.js';
+import { ensureFont, fontsUsed, registerUserFont, forgetUserFont } from '../assets/fonts.js';
+import {
+  assetFromFile, classifyFile, elementForItem, applyBackground, placeOnPage,
+} from '../assets/imports.js';
 import { buildDemoDesigns } from '../demo.js';
 import { shortcutFor, arrowDelta } from '../tools/shortcuts.js';
 
@@ -26,7 +32,24 @@ const TOOLS = [
   ['line', 'Line', 'L'],
 ];
 
-const reid = () => Math.random().toString(36).slice(2, 10);
+// The library is its own chunk: its catalog, templates and previews load
+// the first time someone opens it.
+const Library = lazy(() => import('./Library.jsx'));
+const loadTemplates = () => import('../assets/templates.js');
+
+const isLibraryHash = () => /^#library\b/.test(window.location.hash);
+
+// Browser checks for imported files.
+const importChecks = {
+  imageSize: (file) => new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); resolve({ w: img.naturalWidth, h: img.naturalHeight }); };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('decode')); };
+    img.src = url;
+  }),
+  font: (asset) => registerUserFont(asset),
+};
 
 export default function App() {
   const [state, dispatch] = useReducer(docReducer, undefined, initialDocState);
@@ -41,6 +64,11 @@ export default function App() {
   const [newDialog, setNewDialog] = useState(false);
   const [images, setImages] = useState({});
   const [imgError, setImgError] = useState('');
+  const [libraryOpen, setLibraryOpen] = useState(isLibraryHash);
+  const [favorites, setFavorites] = useState(() => new Set());
+  const [uploads, setUploads] = useState([]);
+  const [components, setComponents] = useState([]);
+  const [importError, setImportError] = useState('');
   const apiRef = useRef(null);
   const fileRef = useRef(null);
   const dbLive = useRef(null);
@@ -56,12 +84,7 @@ export default function App() {
     const map = {};
     if (dbLive.current) {
       const ids = new Set();
-      for (const p of design.pages) {
-        for (const el of p.elements) {
-          if (el.type === 'image' && el.imageId) ids.add(el.imageId);
-          for (const c of el.children || []) if (c.type === 'image' && c.imageId) ids.add(c.imageId);
-        }
-      }
+      for (const p of design.pages) for (const id of imageIdsIn(p.elements)) ids.add(id);
       for (const id of ids) {
         const blob = await getImage(dbLive.current, id);
         if (blob) map[id] = URL.createObjectURL(blob);
@@ -75,6 +98,18 @@ export default function App() {
   const refreshList = useCallback(async () => {
     if (!dbLive.current) return;
     setDesigns(await listDesigns(dbLive.current));
+  }, []);
+
+  // The library's own data on this device: imports (fonts registered so
+  // designs using them draw right), saved components and favourites.
+  const refreshLibrary = useCallback(async () => {
+    const db = dbLive.current;
+    if (!db) return;
+    const assets = await listAssets(db);
+    for (const a of assets) if (a.kind === 'font') await registerUserFont(a).catch(() => {});
+    setUploads(assets);
+    setComponents(await listComponents(db));
+    setFavorites(await getFavorites(db));
   }, []);
 
   const boot = useCallback(async () => {
@@ -95,6 +130,7 @@ export default function App() {
       const list = await listDesigns(db);
       setDesigns(list);
       setDbBroken(false);
+      await refreshLibrary().catch(() => {});
       if (list.length) {
         const wantDemoSelection = useDemo && list[0].pages[0]?.elements.some((e) => e.id === 'd-block');
         await open(list[0], { selection: wantDemoSelection ? ['d-block'] : [] });
@@ -108,7 +144,7 @@ export default function App() {
       setDesigns([]);
       setPhase('empty');
     }
-  }, [open]);
+  }, [open, refreshLibrary]);
 
   useEffect(() => { boot(); }, [boot]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -161,41 +197,197 @@ export default function App() {
     }
   }, [designs, open, refreshList]);
 
-  // ── Images from this device ───────────────────────────────────────────
-  const onFile = useCallback(async (e) => {
-    const file = e.target.files && e.target.files[0];
-    e.target.value = '';
-    if (!file) return;
+  // ── Library: imports, inserting, templates, favourites ────────────────
+  const currentPage = () => {
     const st = stateRef.current;
-    const p = st.doc ? st.doc.pages.find((pp) => pp.id === st.pageId) : null;
+    return st.doc ? st.doc.pages.find((pp) => pp.id === st.pageId) || st.doc.pages[0] : null;
+  };
+  const insertElements = useCallback((els) => {
+    const p = currentPage();
+    if (!p || !els.length) return;
+    apply((dr) => addElements(dr, p.id, els), true);
+    dispatch({ type: 'select', ids: els.map((el) => el.id) });
+  }, [apply]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // An imported image on the page: the element gets its own copy of the
+  // blob, so deleting the design never removes the library's copy.
+  const insertImageAsset = useCallback(async (asset) => {
+    const p = currentPage();
     if (!p) return;
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = async () => {
-      const id = uid();
-      const scale = Math.min((p.width * 0.6) / img.naturalWidth, (p.height * 0.6) / img.naturalHeight, 1);
-      const w = Math.max(1, Math.round(img.naturalWidth * scale));
-      const h = Math.max(1, Math.round(img.naturalHeight * scale));
-      const el = newElement('image', { x: Math.round((p.width - w) / 2), y: Math.round((p.height - h) / 2), w, h },
-        { imageId: id, name: file.name.replace(/\.[^.]+$/, '') || 'Image' });
-      try { if (dbLive.current) await putImage(dbLive.current, id, file); } catch { /* keeps showing until reload */ }
-      setImages((m) => ({ ...m, [id]: url }));
-      apply((dr) => addElements(dr, p.id, [el]), true);
-      dispatch({ type: 'select', ids: [el.id] });
-    };
-    img.onerror = () => {
-      URL.revokeObjectURL(url);
-      setImgError("That file isn't an image this browser can open.");
-      setTimeout(() => setImgError(''), 5000);
-    };
-    img.src = url;
-  }, [apply]);
+    const id = uid();
+    try { if (dbLive.current) await putImage(dbLive.current, id, asset.blob); } catch { /* shows until reload */ }
+    setImages((m) => ({ ...m, [id]: URL.createObjectURL(asset.blob) }));
+    insertElements([newElement('image', placeOnPage(p, asset.w, asset.h, 0.6), {
+      imageId: id, name: asset.name, natW: asset.w, natH: asset.h,
+    })]);
+  }, [insertElements]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const showImportError = (msg) => {
+    setImportError(msg);
+    setImgError(msg);
+    setTimeout(() => { setImportError(''); setImgError(''); }, 6000);
+  };
+
+  // Files from this device go into the library (Your files); with
+  // `insert`, images and SVGs are also added to the current page.
+  const importFiles = useCallback(async (files, insert) => {
+    for (const file of files) {
+      try {
+        const asset = await assetFromFile(file, importChecks);
+        try { if (dbLive.current) await putAsset(dbLive.current, asset); } catch { /* still usable this session */ }
+        setUploads((list) => [asset, ...list]);
+        if (insert && asset.kind === 'image') await insertImageAsset(asset);
+        if (insert && asset.kind === 'svg') {
+          const p = currentPage();
+          if (p) insertElements([elementForItem({ kind: 'svg', name: asset.name, asset }, p)]);
+        }
+      } catch (err) {
+        showImportError(err.message || "That file couldn't be imported.");
+      }
+    }
+  }, [insertImageAsset, insertElements]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const onFile = useCallback(async (e) => {
+    const files = [...(e.target.files || [])];
+    e.target.value = '';
+    const usable = files.filter((f) => classifyFile(f) !== 'font');
+    if (files.length && !usable.length) showImportError('Fonts are imported from the library, under Your files.');
+    if (usable.length) await importFiles(usable, true);
+  }, [importFiles]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const openLibrary = () => {
+    if (!isLibraryHash()) window.location.hash = 'library';
+    setLibraryOpen(true);
+  };
+  const closeLibrary = useCallback(() => {
+    setLibraryOpen(false);
+    if (isLibraryHash()) window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  }, []);
+  useEffect(() => {
+    const onHash = () => setLibraryOpen(isLibraryHash());
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+
+  const chooseTemplate = useCallback(async (tpl) => {
+    const { instantiateTemplate } = await loadTemplates();
+    const d = instantiateTemplate(tpl);
+    try { if (dbLive.current) await putDesign(dbLive.current, d); } catch { /* keep editing */ }
+    closeLibrary();
+    await open(d);
+    void refreshList();
+  }, [open, refreshList, closeLibrary]);
+
+  const insertItem = useCallback(async (item) => {
+    const p = currentPage();
+    if (!p) return;
+    if (item.kind === 'component') {
+      const c = item.component;
+      const x = Math.round((p.width - c.w) / 2);
+      const y = Math.round((p.height - c.h) / 2);
+      const els = dbLive.current ? await componentElements(dbLive.current, c, x, y) : [];
+      const map = {};
+      for (const id of imageIdsIn(els)) {
+        const blob = await getImage(dbLive.current, id);
+        if (blob) map[id] = URL.createObjectURL(blob);
+      }
+      setImages((m) => ({ ...m, ...map }));
+      insertElements(els);
+    } else if (item.kind === 'upload' && item.asset.kind === 'image') {
+      await insertImageAsset(item.asset);
+    } else {
+      const el = elementForItem(item, p);
+      if (el) insertElements([el]);
+    }
+    closeLibrary();
+  }, [insertElements, insertImageAsset, closeLibrary]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const applyPageBackground = useCallback((fill) => {
+    const p = currentPage();
+    if (!p) return;
+    apply((dr) => { applyBackground(dr.pages.find((pp) => pp.id === p.id), fill); dr.updatedAt = Date.now(); }, true);
+    dispatch({ type: 'select', ids: [] });
+    closeLibrary();
+  }, [apply, closeLibrary]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A font from the library: on the selected text if there is one, else a
+  // new line of text set in it.
+  const chooseFont = useCallback((key, name) => {
+    const st = stateRef.current;
+    const p = currentPage();
+    if (!p) return;
+    ensureFont(key);
+    const texts = st.selection.map((id) => p.elements.find((el) => el.id === id)).filter((el) => el && el.type === 'text');
+    if (texts.length) {
+      apply((dr) => updateElements(dr, p.id, texts.map((t) => t.id), { font: key }), true);
+    } else {
+      const w = Math.round(p.width * 0.6);
+      const el = newElement('text', { x: Math.round((p.width - w) / 2), y: Math.round(p.height / 2 - 40), w, h: 80 },
+        { text: name, font: key, size: Math.max(24, Math.round(p.width / 14)), align: 'center' });
+      el.h = measureTextHeight(el);
+      insertElements([el]);
+    }
+    closeLibrary();
+  }, [apply, insertElements, closeLibrary]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggleFavorite = useCallback(async (id, on) => {
+    setFavorites((f) => { const n = new Set(f); if (on) n.add(id); else n.delete(id); return n; });
+    try { if (dbLive.current) setFavorites(await setFavorite(dbLive.current, id, on)); } catch { /* kept for this session */ }
+  }, []);
+
+  const removeUpload = useCallback(async (asset) => {
+    if (!window.confirm(`Remove "${asset.name}" from your files? Designs that already use it keep it.`)) return;
+    try { if (dbLive.current) await deleteAsset(dbLive.current, asset.id); } catch { /* nothing stored */ }
+    if (asset.kind === 'font') forgetUserFont(asset.id);
+    setUploads((list) => list.filter((a) => a.id !== asset.id));
+  }, []);
+
+  const removeComponent = useCallback(async (comp) => {
+    if (!window.confirm(`Delete the component "${comp.name}"? Designs that already use it keep it.`)) return;
+    try { if (dbLive.current) await deleteComponent(dbLive.current, comp.id); } catch { /* nothing stored */ }
+    setComponents((list) => list.filter((c) => c.id !== comp.id));
+  }, []);
+
+  // Save the selection as a reusable component, kept in the library.
+  const saveAsComponent = useCallback(async () => {
+    const st = stateRef.current;
+    const p = currentPage();
+    if (!p || !st.selection.length) return;
+    if (!dbLive.current) { showImportError("Components can't be saved on this device right now."); return; }
+    const chosen = p.elements.filter((el) => st.selection.includes(el.id));
+    const name = window.prompt('Name this component', chosen.length === 1 ? chosen[0].name : 'Component');
+    if (name === null) return;
+    const box = unionBoxes(chosen.map(boundsOfElement));
+    try {
+      const comp = await saveComponent(dbLive.current, name.trim() || 'Component', chosen, box);
+      setComponents((list) => [comp, ...list]);
+      setImgError(`Saved "${comp.name}" to the library, under Elements.`);
+      setTimeout(() => setImgError(''), 4000);
+    } catch {
+      showImportError("The component couldn't be saved on this device.");
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const copyDesign = useCallback(async (id) => {
+    if (!dbLive.current) return;
+    if (stateRef.current.doc?.id === id) await putDesign(dbLive.current, stateRef.current.doc);
+    const copy = await duplicateDesign(dbLive.current, id);
+    await refreshList();
+    if (copy) await open(copy);
+  }, [open, refreshList]);
+
+  // Bundled fonts load the first time a page uses them.
+  const pageFonts = page ? fontsUsed([page]).join(',') : '';
+  useEffect(() => {
+    if (pageFonts) pageFonts.split(',').forEach(ensureFont);
+  }, [pageFonts]);
 
   // ── Keyboard shortcuts ────────────────────────────────────────────────
   useEffect(() => {
     const onKey = (e) => {
       const t = e.target;
       if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t.isContentEditable) return;
+      if (document.querySelector('[data-library]')) return; // the library has its own keys
       const st = stateRef.current;
       const p = st.doc ? st.doc.pages.find((pp) => pp.id === st.pageId) : null;
       if (!p) return;
@@ -370,6 +562,11 @@ export default function App() {
         <button className="tool" title="Add guide (G)" aria-label="Add guide" disabled={empty} onClick={addVGuide}>
           {icons.guide({})}
         </button>
+        <span className="sep" />
+        <button className={'tool' + (libraryOpen ? ' on' : '')} title="Library: templates, elements, fonts"
+          aria-label="Library" aria-pressed={libraryOpen} onClick={openLibrary} data-open-library>
+          {icons.library({})}
+        </button>
       </div>
       {doc && p2 && (
         <div className="pages" data-pages>
@@ -393,6 +590,7 @@ export default function App() {
               <h2 className="text-heading">No designs yet</h2>
               <p className="sub">Make a design at a size you set, then add text, shapes and images.</p>
               <button className="btn-primary" onClick={() => setNewDialog(true)}>New design</button>
+              <button className="btn-secondary" onClick={openLibrary}>Start from a template</button>
             </div>
           )}
         </div>
@@ -404,18 +602,29 @@ export default function App() {
             zoom={zoom} setZoom={setZoom} view={view} setView={setView}
             images={images} onFitReady={(a) => (apiRef.current = a)} />
           <Inspector state={state} dispatch={dispatch} apply={apply} page={p2}
-            onAddImage={() => fileRef.current && fileRef.current.click()} imgError={imgError} />
+            onAddImage={() => fileRef.current && fileRef.current.click()} imgError={imgError}
+            onSaveComponent={saveAsComponent} />
         </div>
       )}
-      <input ref={fileRef} type="file" accept="image/*" hidden onChange={onFile} />
+      <input ref={fileRef} type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/svg+xml,.svg" multiple hidden onChange={onFile} />
       {sheet && doc && (
         <DesignsSheet designs={designs} currentId={doc.id} onClose={() => setSheet(false)}
           onOpen={async (d) => { setSheet(false); await open(d); }}
           onNew={() => { setSheet(false); setNewDialog(true); }}
           onDelete={(id) => removeDesign(id).then(() => setSheet(false))}
-          onRename={renameDesign} />
+          onRename={renameDesign}
+          onDuplicate={(id) => { setSheet(false); void copyDesign(id); }} />
       )}
-      {newDialog && <NewDesignDialog onCreate={createNew} onCancel={() => setNewDialog(false)} />}
+      {libraryOpen && (
+        <Suspense fallback={<div className="dialog-scrim"><div className="dialog card lib" aria-busy="true"><div className="skeleton" style={{ height: 28, width: 120 }} /></div></div>}>
+          <Library hasDesign={!empty} favorites={favorites} uploads={uploads} components={components} importError={importError}
+            onToggleFavorite={toggleFavorite} onUseTemplate={chooseTemplate} onInsert={insertItem}
+            onApplyBackground={applyPageBackground} onUseFont={chooseFont} onImport={(files) => importFiles(files, false)}
+            onDeleteUpload={removeUpload} onDeleteComponent={removeComponent} onClose={closeLibrary} />
+        </Suspense>
+      )}
+      {newDialog && <NewDesignDialog onCreate={createNew} onCancel={() => setNewDialog(false)}
+        onTemplates={() => { setNewDialog(false); openLibrary(); }} />}
     </div>
   );
 }

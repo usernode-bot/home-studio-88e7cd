@@ -1,21 +1,18 @@
 // The document model: factories, ids, bounds, geometry.
 // Pure data and pure functions — no DOM, no React, no storage.
 
+import { SYSTEM_FONTS, SYSTEM_LABELS, fontStack } from '../assets/fonts.js';
+
 export const uid = () =>
   Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
 
 export const PAGE_MIN = 16;
 export const PAGE_MAX = 10000;
 
-// The four text fonts, keyed as stored on the element.
-export const FONT_FAMILIES = {
-  sans: 'system-ui, -apple-system, "Segoe UI", sans-serif',
-  serif: 'Georgia, "Times New Roman", serif',
-  mono: 'ui-monospace, "SF Mono", Menlo, Consolas, monospace',
-  rounded: 'ui-rounded, "Hiragino Maru Gothic ProN", Quicksand, system-ui, sans-serif',
-};
-
-export const FONT_LABELS = { sans: 'Sans', serif: 'Serif', mono: 'Mono', rounded: 'Rounded' };
+// The four system text fonts, keyed as stored on the element. Bundled and
+// imported fonts are in assets/fonts.js; fontStack() resolves any key.
+export const FONT_FAMILIES = SYSTEM_FONTS;
+export const FONT_LABELS = SYSTEM_LABELS;
 
 export const TYPE_LABELS = {
   text: 'Text',
@@ -24,6 +21,8 @@ export const TYPE_LABELS = {
   line: 'Line',
   image: 'Image',
   group: 'Group',
+  shape: 'Shape',
+  svg: 'Graphic',
 };
 
 export function newPage(name, width, height) {
@@ -49,7 +48,7 @@ export function newElement(type, box = {}, extra = {}) {
   const el = {
     id: uid(),
     type,
-    name: TYPE_LABELS[type] === 'Shape' ? (type === 'ellipse' ? 'Ellipse' : 'Rectangle') : TYPE_LABELS[type],
+    name: type === 'rect' ? 'Rectangle' : type === 'ellipse' ? 'Ellipse' : TYPE_LABELS[type],
     x: box.x ?? 0,
     y: box.y ?? 0,
     w: Math.max(1, box.w ?? 100),
@@ -57,7 +56,7 @@ export function newElement(type, box = {}, extra = {}) {
     rotation: 0,
     opacity: 1,
   };
-  if (type === 'rect' || type === 'ellipse') {
+  if (type === 'rect' || type === 'ellipse' || type === 'shape') {
     el.fill = '#6b7280';
     el.stroke = '';
     el.strokeWidth = 0;
@@ -74,8 +73,15 @@ export function newElement(type, box = {}, extra = {}) {
     el.weight = 400;
     el.align = 'left';
     el.color = '#1c1917';
+    el.lineHeight = 1.25;
+    el.letterSpacing = 0;
   }
+  if (type === 'shape') el.shape = 'star';
   if (type === 'image') el.imageId = null;
+  if (type === 'svg') {
+    el.svg = '';
+    el.color = '#1c1917';
+  }
   return Object.assign(el, extra);
 }
 
@@ -158,13 +164,16 @@ export function pageIsValid(w, h) {
 // element's font. Runs in the browser only (needs a measuring context).
 export function measureTextHeight(el) {
   const ctx = document.createElement('canvas').getContext('2d');
-  ctx.font = `${el.weight} ${el.size}px ${FONT_FAMILIES[el.font] || FONT_FAMILIES.sans}`;
+  ctx.font = `${el.italic ? 'italic ' : ''}${el.weight} ${el.size}px ${fontStack(el.font)}`;
+  const spacing = el.letterSpacing || 0;
+  const width = (s) => ctx.measureText(s).width + spacing * s.length;
+  const lh = el.lineHeight || 1.25;
   let lines = 0;
   for (const para of String(el.text).split('\n')) {
     let line = '';
     for (const word of para.split(' ')) {
       const next = line ? line + ' ' + word : word;
-      if (line && ctx.measureText(next).width > el.w) {
+      if (line && width(next) > el.w) {
         lines += 1;
         line = word;
       } else {
@@ -173,5 +182,19 @@ export function measureTextHeight(el) {
     }
     lines += 1;
   }
-  return Math.max(el.size * 1.25, lines * el.size * 1.25 + 8);
+  return Math.max(el.size * lh, lines * el.size * lh + 8);
+}
+
+// Give an element (and a group's children) fresh ids, in place.
+export function reidElement(el) {
+  el.id = uid();
+  if (el.children) el.children.forEach(reidElement);
+  return el;
+}
+
+// Every image blob id an element list references, groups included.
+export function imageIdsIn(elements) {
+  const ids = new Set();
+  for (const el of walk(elements)) if (el.type === 'image' && el.imageId) ids.add(el.imageId);
+  return ids;
 }

@@ -136,6 +136,18 @@ the way design tools have long marked guides.
   design deletes its images.
 - The staging demo seeds a separate `home-studio-demo` database, only when
   `GET /api/env` says staging and the URL has `?demo=1`.
+- Style fields are optional on every element (`gradient`, `shadow`,
+  `strokeStyle`, text effects, image `crop`/`mask`/`adjust`), so older
+  designs render unchanged; `doc/style.js` turns them into CSS.
+- Bundle only assets under a licence listed in `assets/catalog.js`
+  `LICENSES` (CC0, ISC, OFL today), each with its source and attribution;
+  `tests/assets.test.js` checks every item. Home Studio's own drawings are CC0.
+- Imported files, components and favourites live in the `assets`,
+  `components` and `prefs` stores. Anything placed on a page gets its own
+  copy of its image blob, so deleting a design never breaks the library or
+  another design.
+- The library is its own lazily loaded chunk, and bundled fonts load only
+  when something uses them; keep both that way.
 
 The kit is in `styles/tailwind-input.css`: colour tokens with a light and
 a dark value (named in `tailwind.config.js`), and a few components

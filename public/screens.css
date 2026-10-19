@@ -156,3 +156,62 @@
   .panel.props { order: 2; width: 320px; flex: none; border-left: 1px solid rgb(var(--line)); overflow-y: auto; }
   .work { order: 1; flex: 1 1 auto; height: auto; min-width: 0; }
 }
+
+/* ── Phase 2: style controls and the library ────────────────────────────
+   Chips are the small toggles (text style, effects, filters, library tabs
+   and categories); the library is a wide dialog with a grid of tiles. */
+
+.chips, .toggles { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  min-height: 44px; padding: 0 12px; border-radius: 999px; border: 1px solid rgb(var(--line));
+  background: rgb(var(--surface)); color: rgb(var(--fg)); font: inherit; font-size: 14px; cursor: pointer; white-space: nowrap;
+}
+.chip.on { border-color: rgb(var(--accent)); background: rgb(var(--accent)); color: rgb(var(--on-accent)); }
+.chip:focus-visible, .tile-main:focus-visible, .tile-icon:focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: 2px; }
+
+.f.range { gap: 8px; }
+.f input[type='range'] { flex: 1; accent-color: rgb(var(--accent)); min-height: 28px; }
+.f .range-val { min-width: 48px; text-align: right; color: rgb(var(--muted)); font-variant-numeric: tabular-nums; }
+.f input[type='checkbox'] { flex: 0 0 22px; width: 22px; height: 22px; accent-color: rgb(var(--accent)); }
+
+.dialog.lib { max-width: 56rem; height: min(88vh, 900px); display: flex; flex-direction: column; overflow: hidden; }
+.lib-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.lib .chips { flex: none; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; }
+.lib > .state-empty { flex: 1 1 auto; }
+.lib [data-credits] { overflow-y: auto; flex: 1 1 auto; }
+.lib-grid {
+  list-style: none; padding: 0; margin: 12px 0 0; overflow-y: auto; flex: 1 1 auto;
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; align-content: start;
+}
+.tile { position: relative; display: flex; flex-direction: column; }
+.tile-main {
+  display: flex; flex-direction: column; align-items: stretch; gap: 4px; padding: 8px; text-align: left;
+  border: 1px solid rgb(var(--line)); border-radius: 12px; background: rgb(var(--surface)); color: inherit; font: inherit; cursor: pointer;
+}
+.tile-main:hover { background: rgb(var(--raised)); }
+.tile-main:disabled { cursor: default; opacity: 0.55; }
+.tile-name { font-size: 14px; line-height: 20px; font-weight: 500; }
+.tile-sub { font-size: 12px; line-height: 16px; color: rgb(var(--muted)); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tile-actions { position: absolute; top: 4px; right: 4px; display: flex; gap: 2px; }
+.tile-icon {
+  width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; border: 0; border-radius: 999px;
+  background: rgb(var(--surface) / 0.85); color: rgb(var(--muted)); cursor: pointer;
+}
+.tile-icon.on { color: rgb(var(--accent)); }
+.tile-icon svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.tile-icon.on svg { fill: currentColor; }
+/* Previews show the white page the item goes on, in both looks. */
+.preview {
+  position: relative; overflow: hidden; display: flex; align-items: center; justify-content: center;
+  align-self: center; width: 96px; height: 96px; max-width: 100%; background: #fff; border-radius: 6px;
+}
+.preview img { width: 64%; height: 64%; object-fit: contain; }
+.preview-font { color: #1c1917; font-size: 40px; line-height: 1; }
+.credit { align-items: flex-start; }
+.credit a { color: rgb(var(--accent)); text-decoration: underline; }
+
+@media (max-width: 640px) {
+  .dialog.lib { max-width: none; height: 100%; max-height: none; border-radius: 0; }
+  .dialog-scrim:has(.lib) { padding: 0; }
+  .lib-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
+}

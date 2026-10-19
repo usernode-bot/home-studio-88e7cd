@@ -2,7 +2,9 @@
 // `home-studio-demo` database the first time ?demo=1 is opened on staging.
 // Every control works on them; they are kept apart from a viewer's own.
 
+import { Sparkles } from 'lucide';
 import { newDesign, newPage } from './doc/model.js';
+import { iconSvg } from './assets/svg.js';
 
 const HOUR = 3600 * 1000;
 
@@ -10,9 +12,11 @@ function seedPage1() {
   const page = newPage('Poster', 1080, 1350);
   page.background = '#fdf6ec';
   page.elements = [
-    { id: 'd-sky', type: 'rect', name: 'Yellow sky', x: 0, y: 0, w: 1080, h: 420, rotation: 0, opacity: 1, fill: '#f2c94c', stroke: '', strokeWidth: 0, radius: 0 },
+    { id: 'd-sky', type: 'rect', name: 'Yellow sky', x: 0, y: 0, w: 1080, h: 420, rotation: 0, opacity: 1, fill: '#f2c94c', stroke: '', strokeWidth: 0, radius: 0, gradient: { kind: 'linear', angle: 180, to: '#fdf6ec' } },
     { id: 'd-sun', type: 'ellipse', name: 'Red sun', x: 690, y: 60, w: 270, h: 270, rotation: 0, opacity: 1, fill: '#e4572e', stroke: '', strokeWidth: 0 },
-    { id: 'd-block', type: 'rect', name: 'Green block', x: 82, y: 620, w: 430, h: 230, rotation: -4, opacity: 1, fill: '#1f6f5c', stroke: '', strokeWidth: 0, radius: 0 },
+    { id: 'd-block', type: 'rect', name: 'Green block', x: 82, y: 620, w: 430, h: 230, rotation: -4, opacity: 1, fill: '#1f6f5c', stroke: '', strokeWidth: 0, radius: 24, shadow: { x: 0, y: 16, blur: 30, color: '#000000', alpha: 0.25 } },
+    { id: 'd-star', type: 'shape', shape: 'star', name: 'Star', x: 560, y: 560, w: 150, h: 150, rotation: 12, opacity: 1, fill: '#e4572e', stroke: '#fdf6ec', strokeWidth: 4, strokeStyle: 'dashed' },
+    { id: 'd-icon', type: 'svg', name: 'Sparkles icon', x: 820, y: 640, w: 140, h: 140, rotation: 0, opacity: 1, svg: iconSvg(Sparkles), color: '#1f6f5c' },
     { id: 'd-title', type: 'text', name: 'Garden supper', x: 82, y: 900, w: 880, h: 140, rotation: 0, opacity: 1, text: 'Garden supper', font: 'serif', size: 96, weight: 700, align: 'left', color: '#1c1917' },
     { id: 'd-date', type: 'text', name: 'Date', x: 82, y: 1120, w: 620, h: 70, rotation: 0, opacity: 1, text: 'Saturday 14 June, 6 pm\nBring a dish to share', font: 'sans', size: 44, weight: 400, align: 'left', color: '#44403c' },
     { id: 'd-leaf', type: 'ellipse', name: 'Leaf', x: 770, y: 1010, w: 200, h: 100, rotation: 18, opacity: 1, fill: '#1f6f5c', stroke: '', strokeWidth: 0 },
