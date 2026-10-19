@@ -182,10 +182,17 @@ export function cleanDesign(raw, ctx) {
   return {
     id: id(raw.id), name: str(raw.name, 200, 'Imported design').trim() || 'Imported design',
     createdAt: time(raw.createdAt), updatedAt: time(raw.updatedAt),
+    // Where a remixed gallery copy came from; optional, so older files
+    // read back unchanged.
+    ...(raw.credit ? { credit: str(raw.credit, 200).trim() || undefined } : {}),
     pages: raw.pages.map((p, i) => page(p, ctx, i)),
   };
 }
 
+// Exported for the gallery envelope (io/gallery.js), which carries a
+// design and its images the same way a project file does.
+export const cleanFiles = files;
+export { IMAGE_MIME as PROJECT_IMAGE_MIME, MAX_IMAGE_BYTES as PROJECT_MAX_IMAGE_BYTES };
 function files(list, mimes, maxBytes, ctx, what) {
   const out = [];
   for (const f of Array.isArray(list) ? list : []) {

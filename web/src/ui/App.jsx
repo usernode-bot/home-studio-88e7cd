@@ -9,10 +9,11 @@ import Canvas from '../render/Canvas.jsx';
 import { LayersPanel, Inspector } from './panels.jsx';
 import { NewDesignDialog, DesignsSheet } from './dialogs.jsx';
 import { FileMenu, VersionsDialog, BackupDialog } from './fileDialogs.jsx';
+import RemoteCursors from './RemoteCursors.jsx';
 import { icons } from './icons.jsx';
 import {
   docReducer, initialDocState, pageOf, addElements, moveElements, removeElements, updateElements,
-  duplicateSelection, groupSelection, ungroupSelection, pageAdd,
+  duplicateSelection, groupSelection, ungroupSelection, pageAdd, reorderElement, pageDelete, pageUpdate,
 } from '../doc/store.js';
 import {
   newDesign, newPage, newElement, uid, measureTextHeight, imageIdsIn, unionBoxes, boundsOfElement, PAGE_MAX, PAGE_MIN,
@@ -35,8 +36,12 @@ import {
   assetFromFile, classifyFile, elementForItem, applyBackground, placeOnPage, IMAGE_ACCEPT, baseName,
 } from '../assets/imports.js';
 import { svgSize } from '../assets/svg.js';
-import { buildDemoDesigns } from '../demo.js';
+import { buildDemoDesigns, buildDemoGallerySource } from '../demo.js';
 import { shortcutFor, arrowDelta } from '../tools/shortcuts.js';
+import { loadSyncPref, saveSyncPref, runSync, queueChange, listOutbox } from '../persist/adapters/sync.js';
+import { getAdapter } from '../persist/adapters/index.js';
+import { loadSources, addSource, removeSource } from '../gallery/sources.js';
+import { diffElements } from '../net/protocol.js';
 
 const TOOLS = [
   ['select', 'Select', 'V'],
@@ -47,8 +52,11 @@ const TOOLS = [
 ];
 
 // The library is its own chunk: its catalog, templates and previews load
-// the first time someone opens it.
+// the first time someone opens it. The Phase 4 dialogs are lazy chunks too.
 const Library = lazy(() => import('./Library.jsx'));
+const GalleryDialog = lazy(() => import('./GalleryDialog.jsx'));
+const CollaborateDialog = lazy(() => import('./CollaborateDialog.jsx'));
+const RemoteStorageDialog = lazy(() => import('./RemoteStorageDialog.jsx'));
 // The exporters load the first time someone exports, pdf.js the first time
 // a PDF is opened.
 const ExportDialog = lazy(() => import('./ExportDialog.jsx'));
@@ -62,6 +70,21 @@ const journalStore = () => { try { return window.localStorage; } catch { return 
 const loadTemplates = () => import('../assets/templates.js');
 
 const isLibraryHash = () => /^#library\b/.test(window.location.hash);
+const isGalleryHash = () => /^#gallery\b/.test(window.location.hash);
+const isCollabHash = () => /^#collaborate\b/.test(window.location.hash);
+const isRemoteHash = () => /^#remote\b/.test(window.location.hash);
+
+// The document snapshot the collaboration watcher diffs against: what a
+// peer needs to see change, per page. Old doc objects are never mutated
+// (the reducer clones before editing), so the snapshot can hold the live
+// arrays and stay comparable later.
+const snapDoc = (d) => ({
+  name: d.name,
+  pages: d.pages.map((p) => ({
+    id: p.id, name: p.name, background: p.background, width: p.width, height: p.height, elements: p.elements,
+  })),
+});
+const pagesForState = (d) => d.pages.map((p) => ({ id: p.id, elements: p.elements }));
 
 // Browser checks for imported files.
 const importChecks = {
@@ -112,6 +135,14 @@ export default function App() {
   const [images, setImages] = useState({});
   const [imgError, setImgError] = useState('');
   const [libraryOpen, setLibraryOpen] = useState(isLibraryHash);
+  const [galleryOpen, setGalleryOpen] = useState(isGalleryHash);
+  const [collabOpen, setCollabOpen] = useState(isCollabHash);
+  const [remoteOpen, setRemoteOpen] = useState(isRemoteHash);
+  const [session, setSession] = useState(null); // the live collaboration session, or null
+  const [peers, setPeers] = useState([]);
+  const [syncPref, setSyncPref] = useState(null); // null until boot loads it
+  const [outbox, setOutbox] = useState([]);
+  const [gallerySources, setGallerySources] = useState([]);
   const [favorites, setFavorites] = useState(() => new Set());
   const [uploads, setUploads] = useState([]);
   const [components, setComponents] = useState([]);
@@ -139,6 +170,25 @@ export default function App() {
   imagesRef.current = images;
   const stateRef = useRef(state);
   stateRef.current = state;
+  const sessionRef = useRef(null);
+  const watchRef = useRef(null); // the doc snapshot to diff against; null means resync, send nothing
+  const greetedRef = useRef(null); // peers the host has sent the full state to
+  const collabOpenRef = useRef(false);
+  const syncPrefRef = useRef(null);
+  const fileAccessRef = useRef(null);
+  collabOpenRef.current = collabOpen;
+  syncPrefRef.current = syncPref;
+
+  const demoGallery = useMemo(() => (demo ? buildDemoGallerySource() : null), [demo]);
+
+  // The IPFS adapter this device is connected to, when remote storage is
+  // set up on one: what gallery publishing to an IPFS-compatible store
+  // needs.
+  const ipfsLink = useMemo(() => {
+    if (!syncPref || syncPref.kind !== 'ipfs') return null;
+    const adapter = getAdapter('ipfs');
+    return adapter ? { adapter, cfg: adapter.normalize(syncPref.config) } : null;
+  }, [syncPref]);
 
   const apply = useCallback((fn, history) => dispatch({ type: 'apply', fn, history: !!history }), []);
   const doc = state.doc;
@@ -163,6 +213,11 @@ export default function App() {
   const refreshList = useCallback(async () => {
     if (!dbLive.current) return;
     setDesigns(await listDesigns(dbLive.current));
+  }, []);
+
+  const refreshOutbox = useCallback(async () => {
+    if (!dbLive.current) return;
+    setOutbox(await listOutbox(dbLive.current));
   }, []);
 
   // The library's own data on this device: imports (fonts registered so
@@ -206,6 +261,9 @@ export default function App() {
       setDesigns(list);
       setDbBroken(false);
       await refreshLibrary().catch(() => {});
+      setSyncPref(await loadSyncPref(db).catch(() => null));
+      setGallerySources(await loadSources(db).catch(() => []));
+      setOutbox(await listOutbox(db).catch(() => []));
       if (list.length) {
         const wantDemoSelection = useDemo && list[0].pages[0]?.elements.some((e) => e.id === 'd-block');
         await open(list[0], { selection: wantDemoSelection ? ['d-block'] : [] });
@@ -232,6 +290,12 @@ export default function App() {
       setSaveState('saved');
       if (!recoveryRef.current && journalStore()) clearJournal(journalStore(), dbName.current, d);
       void refreshList();
+      // A remote store being set up: queue the finished edit for it.
+      // Queueing never blocks editing and never blocks saving here.
+      const sp = syncPrefRef.current;
+      if (sp && sp.kind && sp.kind !== 'local') {
+        void queueChange(db, d, fileAccessRef.current).then(refreshOutbox).catch(() => {});
+      }
     } catch (err) {
       setSaveState('error');
       if (isQuotaError(err)) setQuota({ level: 'full', dismissed: false });
@@ -248,7 +312,7 @@ export default function App() {
       const st = await storageStatus();
       if (st) setQuota((q) => (q.level === st.level ? q : { level: st.level, dismissed: false }));
     }
-  }), [refreshList]); // eslint-disable-line react-hooks/exhaustive-deps
+  }), [refreshList, refreshOutbox]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (phase !== 'ready' || !state.doc) return;
@@ -286,6 +350,28 @@ export default function App() {
     return () => { window.removeEventListener('online', on); window.removeEventListener('offline', off); };
   }, []);
 
+  // The connection is back (or a remote store was just connected): drain
+  // the outbox. Silently, unless something was brought over.
+  useEffect(() => {
+    const db = dbLive.current;
+    const sp = syncPrefRef.current;
+    if (!online || !db || !sp || sp.kind === 'local') return undefined;
+    const adapter = getAdapter(sp.kind);
+    if (!adapter) return undefined;
+    let alive = true;
+    runSync(db, adapter, fileAccessRef.current).then(async (r) => {
+      if (!alive) return;
+      await refreshOutbox();
+      void refreshList();
+      const cur = stateRef.current.doc;
+      if (r.pulled && cur) {
+        const fresh = await getDesign(db, cur.id);
+        if (fresh && fresh.updatedAt > cur.updatedAt) await open(fresh);
+      }
+    }).catch(() => {});
+    return () => { alive = false; };
+  }, [online, syncPref, open, refreshList, refreshOutbox]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Designs: create, open, rename, delete ─────────────────────────────
   const createNew = useCallback(async ({ name, width, height }) => {
     const d = newDesign(name, width, height);
@@ -309,6 +395,15 @@ export default function App() {
     if (!d) return;
     if (!window.confirm(`Delete "${d.name}"? This can't be undone.`)) return;
     try { await deleteDesign(dbLive.current, id); } catch { /* nothing to clean up */ }
+    // A remote store being set up: tell it the design is gone. The copy
+    // there is left alone when queueing fails.
+    const sp = syncPrefRef.current;
+    if (sp && sp.kind && sp.kind !== 'local' && dbLive.current) {
+      try {
+        await queueChange(dbLive.current, { id: d.id, name: d.name }, fileAccessRef.current, true);
+        await refreshOutbox();
+      } catch { /* the outbox keeps what it has */ }
+    }
     await refreshList();
     if (stateRef.current.doc?.id === id) {
       const rest = await listDesigns(dbLive.current);
@@ -383,8 +478,29 @@ export default function App() {
     setLibraryOpen(false);
     if (isLibraryHash()) window.history.replaceState(null, '', window.location.pathname + window.location.search);
   }, []);
+  // Each Phase 4 dialog opens and closes through its own hash route, the
+  // way the library does, so a deep link lands on it.
+  const openHashDialog = (name, isThere, set) => {
+    if (!isThere()) window.location.hash = name;
+    set(true);
+  };
+  const closeHashDialog = (isThere, set) => {
+    set(false);
+    if (isThere()) window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  };
+  const openGallery = () => openHashDialog('gallery', isGalleryHash, setGalleryOpen);
+  const closeGallery = useCallback(() => closeHashDialog(isGalleryHash, setGalleryOpen), []);
+  const openCollab = () => openHashDialog('collaborate', isCollabHash, setCollabOpen);
+  const closeCollab = useCallback(() => closeHashDialog(isCollabHash, setCollabOpen), []);
+  const openRemote = () => openHashDialog('remote', isRemoteHash, setRemoteOpen);
+  const closeRemote = useCallback(() => closeHashDialog(isRemoteHash, setRemoteOpen), []);
   useEffect(() => {
-    const onHash = () => setLibraryOpen(isLibraryHash());
+    const onHash = () => {
+      setLibraryOpen(isLibraryHash());
+      setGalleryOpen(isGalleryHash());
+      setCollabOpen(isCollabHash());
+      setRemoteOpen(isRemoteHash());
+    };
     window.addEventListener('hashchange', onHash);
     return () => window.removeEventListener('hashchange', onHash);
   }, []);
@@ -514,6 +630,7 @@ export default function App() {
     getAsset: async (id) => (dbLive.current ? dbLive.current.get('assets', id) : null),
     getFontBlob: async (id) => (dbLive.current ? ((await dbLive.current.get('assets', id)) || {}).blob || null : null),
   }), []);
+  fileAccessRef.current = fileAccess;
 
   // Open a design that came from a file: store it and its images, then show it.
   const openImported = useCallback(async (design, images) => {
@@ -708,6 +825,213 @@ export default function App() {
     setRecovery(null);
   }, []);
 
+  // ── Community gallery: sources and remixing ───────────────────────────
+  const refreshGallerySources = useCallback(async () => {
+    if (!dbLive.current) return;
+    setGallerySources(await loadSources(dbLive.current));
+  }, []);
+
+  const addGallerySource = useCallback(async ({ url, name }) => {
+    const db = dbLive.current;
+    if (!db) throw new Error('Storage is not available on this device right now.');
+    const s = await addSource(db, { url, name });
+    await refreshGallerySources();
+    return s;
+  }, [refreshGallerySources]);
+
+  const removeGallerySource = useCallback(async (id) => {
+    if (!dbLive.current) return;
+    await removeSource(dbLive.current, id);
+    await refreshGallerySources();
+  }, [refreshGallerySources]);
+
+  // A remixed gallery item: a fresh local copy, credited to the original.
+  // The credit rides along through project files (io/project.js whitelist).
+  const remixGalleryItem = useCallback(async (parsed) => {
+    const item = parsed.item;
+    const credit = item.author && item.author !== 'Anonymous'
+      ? `${item.title} by ${item.author}`.slice(0, 200)
+      : String(item.title || '').slice(0, 200);
+    let design;
+    if (dbLive.current) {
+      design = await importProject(dbLive.current, { design: parsed.design, images: parsed.images, fonts: parsed.fonts });
+      design.credit = credit;
+      await putDesign(dbLive.current, design);
+      await open(design);
+      void refreshList();
+    } else {
+      const copy = freshCopy({ design: parsed.design, images: parsed.images });
+      design = copy.design;
+      design.credit = credit;
+      await openImported(design, copy.images);
+    }
+    closeGallery();
+    showNotice('info', `Opened "${design.name}" from the gallery. The copy is yours to change; it stays on this device.`);
+  }, [open, openImported, refreshList, closeGallery, showNotice]);
+
+  // ── Remote storage: connect, disconnect, sync ─────────────────────────
+  const connectRemote = useCallback(async (kind, fields) => {
+    const db = dbLive.current;
+    if (!db) throw new Error('Designs can’t be synced on this device right now: storage is not available.');
+    const adapter = getAdapter(kind);
+    if (!adapter) throw new Error('That kind of store is not known.');
+    const cfg = adapter.normalize(fields); // throws with what to fix
+    await adapter.ping(cfg);
+    const pref = { kind, config: fields, syncedAt: {}, manifest: {} };
+    await saveSyncPref(db, pref);
+    setSyncPref(pref);
+  }, []);
+
+  const disconnectRemote = useCallback(async () => {
+    const pref = { kind: 'local', config: {}, syncedAt: {}, manifest: {} };
+    if (dbLive.current) await saveSyncPref(dbLive.current, pref).catch(() => {});
+    setSyncPref(pref);
+    setOutbox([]);
+  }, []);
+
+  const syncNowWithNotes = useCallback(async (onNote) => {
+    const db = dbLive.current;
+    const sp = syncPrefRef.current;
+    const adapter = sp && sp.kind && sp.kind !== 'local' ? getAdapter(sp.kind) : null;
+    if (!db || !adapter) throw new Error('No remote store is connected. Connect one first.');
+    const r = await runSync(db, adapter, fileAccessRef.current, { onNote });
+    await refreshOutbox();
+    void refreshList();
+    // A pull may have replaced the design on screen: show the fresh copy.
+    const cur = stateRef.current.doc;
+    if (r.pulled && cur) {
+      const fresh = await getDesign(db, cur.id);
+      if (fresh && fresh.updatedAt > cur.updatedAt) await open(fresh);
+    }
+    return r;
+  }, [open, refreshList, refreshOutbox]);
+
+  // ── Collaboration: applying the room's work to this design ────────────
+  // A peer's ops go through the same transforms every local edit uses.
+  // Remote work does not enter this device's undo history: undo takes
+  // back your own last step, not someone else's.
+  const applyRemoteOps = useCallback((pageId, ops) => {
+    apply((dr) => {
+      for (const op of ops) {
+        if (op.t === 'add') addElements(dr, pageId, structuredClone(op.els));
+        else if (op.t === 'del') removeElements(dr, pageId, op.ids);
+        else if (op.t === 'set') updateElements(dr, pageId, op.ids, structuredClone(op.patch));
+        else if (op.t === 'move') moveElements(dr, pageId, op.ids, op.dx, op.dy);
+        else if (op.t === 'ord') op.ids.forEach((id, i) => reorderElement(dr, pageId, id, i));
+        else if (op.t === 'pageAdd') {
+          const pg = structuredClone(op.page);
+          if (!dr.pages.some((p) => p.id === pg.id)) {
+            const like = dr.pages[0];
+            dr.pages.push({
+              ...newPage(pg.name || 'Page', pg.width || (like ? like.width : 1080), pg.height || (like ? like.height : 1080)),
+              ...pg,
+            });
+          }
+        } else if (op.t === 'pageDel') pageDelete(dr, op.pageId);
+        else if (op.t === 'pageSet' && dr.pages.some((p) => p.id === op.pageId)) pageUpdate(dr, op.pageId, structuredClone(op.patch));
+        else if (op.t === 'docSet') for (const [k, v] of Object.entries(op.patch)) dr[k] = structuredClone(v);
+      }
+      dr.updatedAt = Date.now();
+    }, false);
+    // The room already has this state: resync the watcher's snapshot on
+    // the next pass instead of echoing the changes back.
+    watchRef.current = null;
+  }, [apply]);
+
+  const applyRemoteState = useCallback((pages) => {
+    apply((dr) => {
+      for (const rp of pages) {
+        const here = dr.pages.find((p) => p.id === rp.id);
+        if (here) here.elements = structuredClone(rp.elements);
+        else {
+          const like = dr.pages[0];
+          dr.pages.push({
+            ...newPage('Page', like ? like.width : 1080, like ? like.height : 1080),
+            id: rp.id,
+            elements: structuredClone(rp.elements),
+          });
+        }
+      }
+      dr.updatedAt = Date.now();
+    }, false);
+    watchRef.current = null;
+  }, [apply]);
+
+  const handleSessionEvent = useCallback((e) => {
+    const s = sessionRef.current;
+    if (!s) return;
+    if (e.type === 'ops') applyRemoteOps(e.pageId, e.ops);
+    else if (e.type === 'state') applyRemoteState(e.pages);
+    else if (e.type === 'state-request') {
+      const d = stateRef.current.doc;
+      if (d) s.sendState(pagesForState(d), e.to);
+    } else if (e.type === 'peers') {
+      setPeers(e.peers);
+      // The host greets a peer that just finished connecting with the
+      // design as it is, so a newcomer starts from the same picture.
+      if (s.role === 'host' && greetedRef.current) {
+        for (const p of e.peers) {
+          if (p.state !== 'open' || greetedRef.current.has(p.peerId)) continue;
+          greetedRef.current.add(p.peerId);
+          const d = stateRef.current.doc;
+          if (d) s.sendState(pagesForState(d), p.peerId);
+        }
+      }
+    } else if (e.type === 'notice') {
+      // The dialog shows its own notices while it is open.
+      if (e.text && !collabOpenRef.current) showNotice(s.role === 'guest' ? 'info' : 'error', e.text);
+    } else if (e.type === 'closed') {
+      sessionRef.current = null;
+      greetedRef.current = null;
+      watchRef.current = null;
+      setSession(null);
+      setPeers([]);
+    }
+  }, [applyRemoteOps, applyRemoteState, showNotice]);
+
+  const startSession = useCallback((s) => {
+    sessionRef.current = s;
+    greetedRef.current = new Set();
+    const d = stateRef.current.doc;
+    watchRef.current = d ? snapDoc(d) : null;
+    setSession(s);
+    setPeers(s.peers());
+    if (dbLive.current && d) void saveVersion('Before collaborating').catch(() => {});
+  }, [saveVersion]);
+
+  const leaveSession = useCallback(() => {
+    const s = sessionRef.current;
+    if (s) s.leave(); // emits 'closed', which cleans up above
+    else { sessionRef.current = null; setSession(null); setPeers([]); }
+  }, []);
+
+  // Every change this device makes, as ops for the room.
+  useEffect(() => {
+    const s = sessionRef.current;
+    const d = state.doc;
+    if (!s || !d) return;
+    if (!watchRef.current) { watchRef.current = snapDoc(d); return; }
+    const before = watchRef.current;
+    const toSend = [];
+    for (const p of d.pages) {
+      const b = before.pages.find((x) => x.id === p.id);
+      if (!b) { toSend.push([null, { t: 'pageAdd', page: structuredClone(p) }]); continue; }
+      for (const op of diffElements(b.elements, p.elements)) toSend.push([p.id, op]);
+      const patch = {};
+      if (p.name !== b.name) patch.name = p.name;
+      if (p.background !== b.background) patch.background = p.background;
+      if (p.width !== b.width) patch.width = p.width;
+      if (p.height !== b.height) patch.height = p.height;
+      if (Object.keys(patch).length) toSend.push([p.id, { t: 'pageSet', patch }]);
+    }
+    for (const b of before.pages) {
+      if (!d.pages.some((p) => p.id === b.id)) toSend.push([null, { t: 'pageDel', pageId: b.id }]);
+    }
+    if (d.name !== before.name) toSend.push([null, { t: 'docSet', patch: { name: d.name } }]);
+    watchRef.current = snapDoc(d);
+    for (const [pageId, op] of toSend) s.sendOps(pageId, [op]);
+  }, [state.doc, session]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // Bundled fonts load the first time a page uses them.
   const pageFonts = page ? fontsUsed([page]).join(',') : '';
   useEffect(() => {
@@ -825,7 +1149,11 @@ export default function App() {
     dispatch({ type: 'set-page', pageId: id });
   };
 
+  const syncTail = syncPref && syncPref.kind && syncPref.kind !== 'local'
+    ? (outbox.length ? `, ${outbox.length} waiting to sync` : ', also on your remote store')
+    : '';
   const statusText = (dbBroken ? 'Not saved' : saveState === 'saving' ? 'Saving…' : saveState === 'error' ? 'Not saved' : 'saved on this device')
+    + syncTail
     + (online ? '' : ', offline');
 
   // ── Loading state ─────────────────────────────────────────────────────
@@ -928,6 +1256,14 @@ export default function App() {
           aria-label="Library" aria-pressed={libraryOpen} onClick={openLibrary} data-open-library>
           {icons.library({})}
         </button>
+        <button className="tool" title="Collaborate: edit this design together, live"
+          aria-label="Collaborate" disabled={empty} onClick={openCollab} data-open-collaborate>
+          {icons.users({})}
+        </button>
+        <button className="tool" title="Community gallery: browse and publish designs"
+          aria-label="Community gallery" onClick={openGallery} data-open-gallery>
+          {icons.globe({})}
+        </button>
       </div>
       {doc && p2 && (
         <div className="pages" data-pages>
@@ -936,6 +1272,24 @@ export default function App() {
           ))}
           <button className="pg" onClick={addPage}>+ Add</button>
           <span style={{ marginLeft: 'auto' }} className="sub">{p2.width} × {p2.height}</span>
+        </div>
+      )}
+      {session && !empty && (
+        <div className="collab-strip" data-collab-strip>
+          <span className="collab-peer">
+            <span className="dot" style={{ background: `rgb(var(--${session.myColor}))` }} />
+            You ({session.role === 'host' ? 'hosting' : 'guest'})
+          </span>
+          {peers.filter((p) => p.state === 'open').map((p) => (
+            <span key={p.peerId} className="collab-peer">
+              <span className="dot" style={{ background: `rgb(var(--${p.color}))` }} />
+              {p.name}
+            </span>
+          ))}
+          <span style={{ flex: 1 }} />
+          <button className="btn-secondary" style={{ minHeight: 32 }} data-collab-leave onClick={leaveSession}>
+            Leave the room
+          </button>
         </div>
       )}
       {empty && (
@@ -966,6 +1320,7 @@ export default function App() {
           <Inspector state={state} dispatch={dispatch} apply={apply} page={p2}
             onAddImage={() => fileRef.current && fileRef.current.click()} imgError={imgError}
             onSaveComponent={saveAsComponent} />
+          {session && <RemoteCursors session={session} page={p2} zoom={zoom} peers={peers} selection={state.selection} />}
         </div>
       )}
       <input ref={fileRef} type="file" accept={`${IMAGE_ACCEPT},image/svg+xml,.svg`} multiple hidden onChange={onFile} />
@@ -977,7 +1332,10 @@ export default function App() {
           onOpenFile={() => openRef.current && openRef.current.click()}
           onDownloadProject={downloadProject}
           onVersions={() => { setFileMenu(false); setVersionsOpen(true); }}
-          onBackup={() => { setFileMenu(false); setBackupOpen({ restore: null }); }} />
+          onBackup={() => { setFileMenu(false); setBackupOpen({ restore: null }); }}
+          onGallery={() => { setFileMenu(false); openGallery(); }}
+          onCollaborate={() => { setFileMenu(false); openCollab(); }}
+          onRemote={() => { setFileMenu(false); openRemote(); }} />
       )}
       {exportOpen && doc && p2 && (
         <Suspense fallback={<div className="dialog-scrim"><div className="dialog card wide" aria-busy="true"><div className="skeleton" style={{ height: 28, width: 120 }} /></div></div>}>
@@ -1008,6 +1366,29 @@ export default function App() {
             onToggleFavorite={toggleFavorite} onUseTemplate={chooseTemplate} onInsert={insertItem}
             onApplyBackground={applyPageBackground} onUseFont={chooseFont} onImport={(files) => importFiles(files, false)}
             onDeleteUpload={removeUpload} onDeleteComponent={removeComponent} onClose={closeLibrary} />
+        </Suspense>
+      )}
+      {galleryOpen && (
+        <Suspense fallback={<div className="dialog-scrim"><div className="dialog card lib" aria-busy="true"><div className="skeleton" style={{ height: 28, width: 120 }} /></div></div>}>
+          <GalleryDialog hasDesign={!empty} design={doc}
+            getProject={() => collectProject(stateRef.current.doc, fileAccess)}
+            sources={gallerySources} demoSource={demoGallery} ipfs={ipfsLink || {}}
+            onAddSource={addGallerySource} onRemoveSource={removeGallerySource}
+            onRemix={remixGalleryItem} onClose={closeGallery} />
+        </Suspense>
+      )}
+      {collabOpen && (
+        <Suspense fallback={<div className="dialog-scrim"><div className="dialog card" aria-busy="true"><div className="skeleton" style={{ height: 28, width: 120 }} /></div></div>}>
+          <CollaborateDialog activeSession={session} onStart={startSession} onLeave={leaveSession}
+            onAppEvent={handleSessionEvent} onClose={closeCollab} />
+        </Suspense>
+      )}
+      {remoteOpen && (
+        <Suspense fallback={<div className="dialog-scrim"><div className="dialog card" aria-busy="true"><div className="skeleton" style={{ height: 28, width: 120 }} /></div></div>}>
+          <RemoteStorageDialog pref={syncPref && syncPref.kind !== 'local' ? syncPref : null}
+            queued={outbox.length} outbox={outbox}
+            onConnect={connectRemote} onDisconnect={disconnectRemote} onSyncNow={syncNowWithNotes}
+            onClose={closeRemote} />
         </Suspense>
       )}
       {newDialog && <NewDesignDialog onCreate={createNew} onCancel={() => setNewDialog(false)}

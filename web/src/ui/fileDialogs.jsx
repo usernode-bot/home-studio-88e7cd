@@ -20,12 +20,15 @@ function Head({ id, title, onClose }) {
   );
 }
 
-export function FileMenu({ hasDesign, onExport, onOpenFile, onDownloadProject, onVersions, onBackup, onClose }) {
+export function FileMenu({ hasDesign, onExport, onOpenFile, onDownloadProject, onVersions, onBackup, onGallery, onCollaborate, onRemote, onClose }) {
   const rows = [
     ['open', 'Open a file', 'Images, SVGs, PDFs and Home Studio files', onOpenFile, false],
     ['project', 'Download project file', 'This design with its pages, layers and images, to open here or on another device', onDownloadProject, !hasDesign],
     ['versions', 'Version history', 'Go back to an earlier version of this design', onVersions, !hasDesign],
     ['backup', 'Backup and storage', 'Back up every design, restore a backup, see the space used', onBackup, false],
+    ['gallery', 'Community gallery', 'Browse designs other people shared, or publish this one', onGallery, false],
+    ['collaborate', 'Collaborate', 'Invite someone to edit this design with you, live', onCollaborate, !hasDesign],
+    ['remote', 'Remote storage', 'Also keep your designs on a store you control', onRemote, false],
   ];
   return (
     <Scrim onClose={onClose} labelledBy="file-title" escape>

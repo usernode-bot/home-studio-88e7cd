@@ -1,0 +1,13 @@
+{
+  "name": "Home Studio",
+  "short_name": "Home Studio",
+  "description": "A free, open-source design editor that runs in your browser",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f4f4f2",
+  "theme_color": "#2554d6",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

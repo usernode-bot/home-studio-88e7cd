@@ -5,6 +5,7 @@
 import { Sparkles } from 'lucide';
 import { newDesign, newPage } from './doc/model.js';
 import { iconSvg } from './assets/svg.js';
+import { buildGalleryItem } from './io/gallery.js';
 
 const HOUR = 3600 * 1000;
 
@@ -86,4 +87,100 @@ export function buildDemoDesigns() {
   poster.updatedAt = Date.now() - HOUR;
   poster.pages = [seedPage1(), seedPage2(), seedPage3()];
   return [poster, bakeSaleFlyer(), plantSwapSign()];
+}
+
+// ── The demo gallery source ──────────────────────────────────────────────
+// Six items by "Demo Person", built in memory as real gallery envelopes
+// (the same bytes a node would serve), so the gallery screen can be seen
+// without any server and any item can be opened and remixed. Available
+// only when the app is opened with ?demo=1 (the caller gates that, the
+// same way the seeded designs are gated).
+
+function coffeeMorningPost() {
+  const design = newDesign('Coffee morning post', 1080, 1080);
+  const page = design.pages[0];
+  page.background = '#fef3c7';
+  page.elements = [
+    { id: 'c-cup', type: 'shape', shape: 'heart', name: 'Cup heart', x: 340, y: 180, w: 400, h: 400, rotation: 0, opacity: 1, fill: '#92400e', stroke: '', strokeWidth: 0 },
+    { id: 'c-title', type: 'text', name: 'Title', x: 90, y: 660, w: 900, h: 120, rotation: 0, opacity: 1, text: 'Coffee morning', font: 'rounded', size: 96, weight: 700, align: 'center', color: '#78350f' },
+    { id: 'c-when', type: 'text', name: 'When', x: 90, y: 820, w: 900, h: 60, rotation: 0, opacity: 1, text: 'Every Friday, 10 am, the library', font: 'sans', size: 40, weight: 400, align: 'center', color: '#92400e' },
+  ];
+  return design;
+}
+
+function readingClubBookmark() {
+  const design = newDesign('Reading club bookmark', 500, 1500);
+  const page = design.pages[0];
+  page.background = '#eef2ff';
+  page.elements = [
+    { id: 'r-band', type: 'rect', name: 'Band', x: 0, y: 0, w: 500, h: 300, rotation: 0, opacity: 1, fill: '#4338ca', stroke: '', strokeWidth: 0 },
+    { id: 'r-title', type: 'text', name: 'Title', x: 40, y: 80, w: 420, h: 140, rotation: 0, opacity: 1, text: 'Read five,\nget a badge', font: 'serif', size: 64, weight: 700, align: 'left', color: '#eef2ff' },
+    { id: 'r-body', type: 'text', name: 'Note', x: 40, y: 420, w: 420, h: 400, rotation: 0, opacity: 1, text: 'Keep this bookmark\nin your book, and\nshow it at the desk.', font: 'sans', size: 36, weight: 400, align: 'left', color: '#312e81' },
+    { id: 'r-star', type: 'shape', shape: 'star', name: 'Star', x: 150, y: 1100, w: 200, h: 200, rotation: 10, opacity: 1, fill: '#fbbf24', stroke: '#4338ca', strokeWidth: 4 },
+  ];
+  return design;
+}
+
+function jumbleSaleBanner() {
+  const design = newDesign('Jumble sale banner', 1600, 600);
+  const page = design.pages[0];
+  page.background = '#ecfeff';
+  page.elements = [
+    { id: 'j-title', type: 'text', name: 'Title', x: 60, y: 160, w: 1100, h: 160, rotation: 0, opacity: 1, text: 'Jumble sale', font: 'serif', size: 140, weight: 700, align: 'left', color: '#155e75' },
+    { id: 'j-when', type: 'text', name: 'When', x: 60, y: 380, w: 1100, h: 80, rotation: 0, opacity: 1, text: 'Saturday 12 July, 9 am to noon, the school yard', font: 'sans', size: 52, weight: 400, align: 'left', color: '#0e7490' },
+    { id: 'j-dot', type: 'ellipse', name: 'Dot', x: 1300, y: 150, w: 220, h: 220, rotation: 0, opacity: 1, fill: '#06b6d4', stroke: '', strokeWidth: 0 },
+    { id: 'j-dot2', type: 'ellipse', name: 'Small dot', x: 1440, y: 330, w: 110, h: 110, rotation: 0, opacity: 1, fill: '#67e8f9', stroke: '', strokeWidth: 0 },
+  ];
+  return design;
+}
+
+export function buildDemoGallerySource() {
+  const defs = [
+    { id: 'g-demo-1', design: null, title: 'Garden supper poster', licence: 'CC0-1.0', tags: ['poster', 'event', 'garden'], description: 'A three-page invitation for a shared supper: poster, menu and thank-you.' },
+    { id: 'g-demo-2', design: bakeSaleFlyer(), title: 'Bake sale flyer', licence: 'CC-BY-4.0', tags: ['flyer', 'event', 'food'], description: 'A one-page flyer for a school bake sale.' },
+    { id: 'g-demo-3', design: plantSwapSign(), title: 'Plant swap sign', licence: 'CC0-1.0', tags: ['sign', 'garden', 'simple'], description: 'A square sign for an allotment plant swap.' },
+    { id: 'g-demo-4', design: coffeeMorningPost(), title: 'Coffee morning post', licence: 'CC-BY-SA-4.0', tags: ['social', 'event', 'simple'], description: 'A square post announcing a weekly coffee morning.' },
+    { id: 'g-demo-5', design: readingClubBookmark(), title: 'Reading club bookmark', licence: 'CC0-1.0', tags: ['print', 'kids', 'reading'], description: 'A tall bookmark for a reading club challenge.' },
+    { id: 'g-demo-6', design: jumbleSaleBanner(), title: 'Jumble sale banner', licence: 'CC-BY-4.0', tags: ['banner', 'event'], description: 'A wide banner to print or post for a jumble sale.' },
+  ];
+  const sourceDesigns = buildDemoDesigns();
+  const byName = new Map(sourceDesigns.map((d) => [d.name, d]));
+  defs[0].design = byName.get('Garden supper poster');
+
+  const items = [];
+  const bytesById = new Map();
+  const now = Date.now();
+  defs.forEach((def, i) => {
+    if (!def.design) return;
+    const meta = {
+      id: def.id,
+      title: def.title,
+      author: 'Demo Person',
+      licence: def.licence,
+      tags: def.tags,
+      description: def.description,
+      createdAt: now - (defs.length - i) * HOUR,
+    };
+    const bytes = buildGalleryItem({ design: def.design, images: [], fonts: [], item: meta });
+    bytesById.set(def.id, bytes);
+    const page = def.design.pages[0];
+    items.push({
+      id: def.id,
+      title: def.title,
+      author: 'Demo Person',
+      licence: def.licence,
+      tags: def.tags,
+      width: page.width,
+      height: page.height,
+      bytes: bytes.length,
+      updatedAt: meta.createdAt,
+    });
+  });
+  return {
+    id: 'demo',
+    kind: 'demo',
+    name: 'Demo gallery',
+    items,               // the listing rows
+    itemBytes: (id) => bytesById.get(id) || null,
+  };
 }

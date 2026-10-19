@@ -1,0 +1,17 @@
+{
+  "name": "home-studio-selfhost",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Self-hosted Home Studio node: design store, community gallery and collaboration signaling",
+  "scripts": {
+    "start": "node store.js",
+    "signal": "node signal.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

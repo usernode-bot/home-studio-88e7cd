@@ -108,6 +108,7 @@ export function DesignsSheet({ designs, currentId, onOpen, onNew, onDelete, onRe
                   <span style={{ display: 'block' }}>{d.name}</span>
                   <span className="sub" style={{ display: 'block' }}>
                     {d.pages[0] ? d.pages[0].width + ' × ' + d.pages[0].height : ''} · {timeAgo(d.updatedAt)}
+                    {d.credit ? <> · from {d.credit}</> : null}
                   </span>
                 </button>
                 <button className="btn-secondary" style={{ minHeight: 44, minWidth: 44 }} aria-label={'Rename ' + d.name} onClick={() => setRenaming(d.id)}>
