@@ -6,9 +6,11 @@
 
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  newElement, boundsOfElement, unionBoxes, topLevelOf, measureTextHeight,
-  FONT_FAMILIES, boxesIntersect,
+  newElement, boundsOfElement, unionBoxes, topLevelOf, measureTextHeight, boxesIntersect,
 } from '../doc/model.js';
+import { fontStack } from '../assets/fonts.js';
+import { pageBackgroundStyle, textStyles } from '../doc/style.js';
+import ElementView from './ElementView.jsx';
 import { moveElements, updateElements, addElements, removeElements, findElement } from '../doc/store.js';
 import { snapMove } from '../tools/snap.js';
 
@@ -443,6 +445,13 @@ export default function Canvas({ state, dispatch, apply, page, zoom, setZoom, vi
     begin({ kind: 'guide', id: gd.id, axis: gd.axis });
   };
 
+  // Stable handler identities for the memoised element views; each call
+  // reaches the latest closure.
+  const handlers = useRef({});
+  handlers.current = { down: onElementPointerDown };
+  const stableDown = useCallback((e, el) => handlers.current.down(e, el), []);
+  const stableDbl = useCallback((el) => live.current.dispatch({ type: 'editing', id: el.id }), []);
+
   // Space held: pan instead of select.
   const spaceDown = useRef(false);
   useEffect(() => {
@@ -469,61 +478,9 @@ export default function Canvas({ state, dispatch, apply, page, zoom, setZoom, vi
   const sel = selection.map((id) => els.find((el) => el.id === id)).filter(Boolean);
   const editingEl = state.editingId ? findElement(els, state.editingId) : null;
 
-  const renderEl = (el, topId, insideGroup) => {
-    if (el.type === 'group') {
-      return (
-        <div key={el.id} className="el" style={{ left: el.x, top: el.y, width: el.w, height: el.h, opacity: el.opacity, transform: `rotate(${el.rotation || 0}deg)` }}>
-          {el.children.map((c) => renderEl(c, el.id, true))}
-        </div>
-      );
-    }
-    const style = {
-      position: 'absolute',
-      left: el.x,
-      top: el.y,
-      width: el.w,
-      height: el.h,
-      opacity: el.opacity,
-      transform: el.rotation ? `rotate(${el.rotation}deg)` : undefined,
-    };
-    if (el.type === 'rect') {
-      return (
-        <div key={el.id} className="el" data-el={el.id} style={{ ...style, background: el.fill, border: el.stroke && el.strokeWidth ? `${el.strokeWidth}px solid ${el.stroke}` : undefined, borderRadius: el.radius || 0, touchAction: 'none' }}
-          onPointerDown={(e) => onElementPointerDown(e, el)} />
-      );
-    }
-    if (el.type === 'ellipse') {
-      return (
-        <div key={el.id} className="el" data-el={el.id} style={{ ...style, background: el.fill, border: el.stroke && el.strokeWidth ? `${el.strokeWidth}px solid ${el.stroke}` : undefined, borderRadius: '50%', touchAction: 'none' }}
-          onPointerDown={(e) => onElementPointerDown(e, el)} />
-      );
-    }
-    if (el.type === 'line') {
-      return (
-        <svg key={el.id} className="el" data-el={el.id} style={{ ...style, overflow: 'visible', touchAction: 'none' }} onPointerDown={(e) => onElementPointerDown(e, el)}>
-          <line x1={0} y1={0} x2={el.w} y2={el.h} stroke={el.stroke} strokeWidth={el.strokeWidth} strokeLinecap="round" />
-        </svg>
-      );
-    }
-    if (el.type === 'image') {
-      return (
-        <img key={el.id} className="el" data-el={el.id} src={images[el.imageId] || ''} alt={el.name} draggable={false}
-          style={{ ...style, objectFit: 'cover', touchAction: 'none', background: 'rgb(var(--raised))' }}
-          onPointerDown={(e) => onElementPointerDown(e, el)} />
-      );
-    }
-    // text
-    return (
-      <div key={el.id} className="el" data-el={el.id}
-        style={{ ...style, fontFamily: FONT_FAMILIES[el.font], fontSize: el.size, fontWeight: el.weight, lineHeight: 1.25, textAlign: el.align, color: el.color, whiteSpace: 'pre-wrap', wordBreak: 'break-word', touchAction: 'none' }}
-        onPointerDown={(e) => onElementPointerDown(e, el)}
-        onDoubleClick={() => {
-          if (!insideGroup || true) live.current.dispatch({ type: 'editing', id: el.id });
-        }}>
-        {el.text}
-      </div>
-    );
-  };
+  const renderEl = (el) => (
+    <ElementView key={el.id} el={el} images={images} onPointerDown={stableDown} onDoubleClick={stableDbl} />
+  );
 
   const wz = page.width * zoom;
   const hz = page.height * zoom;
@@ -535,9 +492,9 @@ export default function Canvas({ state, dispatch, apply, page, zoom, setZoom, vi
       onPointerUp={releasePointer}
       onPointerCancel={releasePointer}>
       <div style={{ position: 'absolute', left: view.x, top: view.y, width: wz, height: hz }}>
-        <div className="art" style={{ left: 0, top: 0, width: page.width, height: page.height, background: page.background, transform: `scale(${zoom})`, transformOrigin: '0 0' }}>
-          {els.map((el) => renderEl(el, el.id, false))}
-          {draft && draft.kind !== 'marquee' && renderEl(draft, 'draft', false)}
+        <div className="art" style={{ left: 0, top: 0, width: page.width, height: page.height, ...pageBackgroundStyle(page), transform: `scale(${zoom})`, transformOrigin: '0 0' }}>
+          {els.map(renderEl)}
+          {draft && draft.kind !== 'marquee' && <ElementView el={draft} images={images} />}
           {editingEl && (
             <textarea
               autoFocus
@@ -550,11 +507,7 @@ export default function Canvas({ state, dispatch, apply, page, zoom, setZoom, vi
                 height: editingEl.h,
                 transform: `rotate(${editingEl.rotation || 0}deg)`,
                 transformOrigin: 'center',
-                fontFamily: FONT_FAMILIES[editingEl.font],
-                fontSize: editingEl.size,
-                fontWeight: editingEl.weight,
-                lineHeight: 1.25,
-                textAlign: editingEl.align,
+                ...textStyles(editingEl, fontStack(editingEl.font)).box,
                 color: editingEl.color,
                 opacity: editingEl.opacity,
               }}

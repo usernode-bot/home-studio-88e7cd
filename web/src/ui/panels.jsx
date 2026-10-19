@@ -1,8 +1,9 @@
 // The two side panels: the layers list and the properties inspector.
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { icons } from './icons.jsx';
-import { boundsOfElement, TYPE_LABELS, FONT_LABELS } from '../doc/model.js';
+import { boundsOfElement, TYPE_LABELS, findElement, measureTextHeight } from '../doc/model.js';
+import { StyleSections, BackgroundSection, NumField, ColorField } from './styleControls.jsx';
 import { updateElements, removeElements } from '../doc/store.js';
 import { alignBoxes, distributeBoxes } from '../tools/align.js';
 
@@ -13,6 +14,8 @@ const TYPE_ICONS = {
   line: icons.line,
   image: icons.image,
   group: icons.group,
+  shape: icons.star,
+  svg: icons.image,
 };
 
 // One layers row, draggable to reorder, double-tappable to rename.
@@ -124,36 +127,7 @@ function reorderRow(page, apply) {
 
 // ── Properties inspector ─────────────────────────────────────────────────
 
-function NumField({ label, value, onCommit, style }) {
-  const [v, setV] = useState(value);
-  useEffect(() => setV(value), [value]);
-  const commit = () => {
-    const n = parseFloat(v);
-    if (Number.isFinite(n) && n !== value) onCommit(n);
-    else setV(value);
-  };
-  return (
-    <label className="f" style={style}>
-      <b>{label}</b>
-      <input className="num" inputMode="decimal" value={v}
-        onChange={(e) => setV(e.target.value)}
-        onBlur={commit}
-        onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); e.stopPropagation(); }} />
-    </label>
-  );
-}
-
-function ColorField({ label, value, onCommit }) {
-  return (
-    <label className="f">
-      <b>{label}</b>
-      <input type="color" className="color" value={/^#[0-9a-fA-F]{6}$/.test(value || '') ? value : '#000000'}
-        onChange={(e) => onCommit(e.target.value)} />
-    </label>
-  );
-}
-
-export function Inspector({ state, dispatch, apply, page, onAddImage, imgError }) {
+export function Inspector({ state, dispatch, apply, page, onAddImage, imgError, onSaveComponent }) {
   const sel = state.selection.map((id) => page.elements.find((el) => el.id === id)).filter(Boolean);
   const one = sel.length === 1 ? sel[0] : null;
   const pageMode = sel.length === 0;
@@ -164,6 +138,23 @@ export function Inspector({ state, dispatch, apply, page, onAddImage, imgError }
     apply((doc) => updateElements(doc, page.id, ids, patch), true);
   };
   const setOne = (patch) => set(patch);
+  // Slider drags: the first change of a drag records history, the rest preview.
+  const setLive = (patch, first) => {
+    const ids = state.selection;
+    apply((doc) => updateElements(doc, page.id, ids, patch), first);
+  };
+  // Typography changes re-measure the text box so it keeps fitting its words.
+  const setText = (patch, history = true) => {
+    const ids = state.selection;
+    apply((doc) => {
+      updateElements(doc, page.id, ids, patch);
+      const p = doc.pages.find((pp) => pp.id === page.id);
+      for (const id of ids) {
+        const el = findElement(p.elements, id);
+        if (el && el.type === 'text') el.h = measureTextHeight(el);
+      }
+    }, history);
+  };
 
   const align = (mode) => {
     apply((doc) => {
@@ -210,6 +201,7 @@ export function Inspector({ state, dispatch, apply, page, onAddImage, imgError }
             <NumField label="W" value={page.width} onCommit={(v) => apply((doc) => { doc.pages.find((p) => p.id === page.id).width = Math.round(v); }, true)} />
             <NumField label="H" value={page.height} onCommit={(v) => apply((doc) => { doc.pages.find((p) => p.id === page.id).height = Math.round(v); }, true)} />
           </div></div>
+          <BackgroundSection page={page} apply={apply} />
           <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
             <button className="btn-secondary" style={{ flex: 1 }} onClick={() => apply((doc) => {
               const i = doc.pages.findIndex((p) => p.id === page.id);
@@ -238,45 +230,8 @@ export function Inspector({ state, dispatch, apply, page, onAddImage, imgError }
             <NumField label="H" value={Math.round(one.h)} onCommit={(v) => setOne({ h: Math.max(1, v) })} />
             <NumField label="Angle" value={Math.round(one.rotation || 0)} onCommit={(v) => setOne({ rotation: v })} />
             <NumField label="Opacity" value={Math.round((one.opacity ?? 1) * 100)} onCommit={(v) => setOne({ opacity: Math.min(1, Math.max(0, v / 100)) })} />
-            {(one.type === 'rect' || one.type === 'ellipse') && (
-              <>
-                <ColorField label="Fill" value={one.fill} onCommit={(v) => setOne({ fill: v })} />
-                <ColorField label="Stroke" value={one.stroke || '#000000'} onCommit={(v) => setOne({ stroke: v, strokeWidth: one.strokeWidth || 1 })} />
-                <NumField label="Stroke width" style={{ gridColumn: 'span 2' }} value={one.strokeWidth || 0} onCommit={(v) => setOne({ strokeWidth: Math.max(0, v) })} />
-                {one.type === 'rect' && <NumField label="Corner" value={one.radius || 0} onCommit={(v) => setOne({ radius: Math.max(0, v) })} />}
-              </>
-            )}
-            {one.type === 'line' && (
-              <>
-                <ColorField label="Stroke" value={one.stroke} onCommit={(v) => setOne({ stroke: v })} />
-                <NumField label="Stroke width" style={{ gridColumn: 'span 2' }} value={one.strokeWidth || 0} onCommit={(v) => setOne({ strokeWidth: Math.max(1, v) })} />
-              </>
-            )}
-            {one.type === 'text' && (
-              <>
-                <label className="f"><b>Font</b>
-                  <select className="num" value={one.font} onChange={(e) => setOne({ font: e.target.value })}>
-                    {Object.entries(FONT_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-                  </select>
-                </label>
-                <NumField label="Size" value={one.size} onCommit={(v) => setOne({ size: Math.max(4, v) })} />
-                <label className="f"><b>Weight</b>
-                  <select className="num" value={String(one.weight)} onChange={(e) => setOne({ weight: Number(e.target.value) })}>
-                    <option value="400">Regular</option>
-                    <option value="700">Bold</option>
-                  </select>
-                </label>
-                <label className="f"><b>Align</b>
-                  <select className="num" value={one.align} onChange={(e) => setOne({ align: e.target.value })}>
-                    <option value="left">Left</option>
-                    <option value="center">Centre</option>
-                    <option value="right">Right</option>
-                  </select>
-                </label>
-                <ColorField label="Colour" value={one.color} onCommit={(v) => setOne({ color: v })} />
-              </>
-            )}
           </div></div>
+          <StyleSections el={one} set={setOne} live={setLive} setText={setText} />
           {(state.selection.length > 1 || showAlign) && sel.length > 0 && (
             <div className="align-row" data-align>
               {[['left', 'Left'], ['hcenter', 'Centre X'], ['right', 'Right'], ['top', 'Top'], ['vmiddle', 'Middle'], ['bottom', 'Bottom']].map(([mode, label]) => (
@@ -304,6 +259,12 @@ export function Inspector({ state, dispatch, apply, page, onAddImage, imgError }
         {sel.length > 0 && (
           <button type="button" className="btn-secondary" style={{ flex: 1 }} aria-expanded={showAlign}
             aria-label="Align" title="Align the selection" onClick={() => setShowAlign((s) => !s)}>Align</button>
+        )}
+        {sel.length > 0 && (
+          <button type="button" className="btn-secondary" onClick={onSaveComponent} aria-label="Save as component"
+            title="Save the selection to the library to reuse it">
+            {icons.library({})}
+          </button>
         )}
         {sel.length > 0 && (
           <button type="button" className="btn-secondary" onClick={remove} aria-label="Delete">

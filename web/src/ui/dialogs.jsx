@@ -3,6 +3,7 @@
 import React, { useState } from 'react';
 import { pageIsValid } from '../doc/model.js';
 import { icons } from './icons.jsx';
+import { SIZE_PRESETS } from '../assets/presets.js';
 
 function timeAgo(ts) {
   const s = Math.max(1, Math.round((Date.now() - ts) / 1000));
@@ -25,7 +26,7 @@ function Scrim({ onClose, children, labelledBy }) {
   );
 }
 
-export function NewDesignDialog({ onCreate, onCancel }) {
+export function NewDesignDialog({ onCreate, onCancel, onTemplates }) {
   const [name, setName] = useState('');
   const [width, setWidth] = useState('');
   const [height, setHeight] = useState('');
@@ -34,7 +35,22 @@ export function NewDesignDialog({ onCreate, onCancel }) {
   return (
     <Scrim onClose={onCancel} labelledBy="new-design-title">
       <h2 className="text-heading" id="new-design-title" style={{ marginBottom: 4 }}>New design</h2>
-      <p className="sub" style={{ marginBottom: 12 }}>Set the size in pixels. You can change it later.</p>
+      <p className="sub" style={{ marginBottom: 12 }}>Set the size in pixels, or pick a common size. You can change it later.</p>
+      <label className="block" style={{ marginBottom: 8 }}>
+        <span className="section-label" style={{ display: 'block' }}>Size</span>
+        <select className="field" data-size-preset
+          value={SIZE_PRESETS.findIndex((p) => String(p.w) === width && String(p.h) === height)}
+          onChange={(e) => {
+            const p = SIZE_PRESETS[Number(e.target.value)];
+            if (!p) return;
+            setWidth(String(p.w));
+            setHeight(String(p.h));
+            if (!name.trim()) setName(p.label);
+          }}>
+          <option value={-1}>Custom size</option>
+          {SIZE_PRESETS.map((p, i) => <option key={p.label} value={i}>{p.label}, {p.w} × {p.h}</option>)}
+        </select>
+      </label>
       <label className="block" style={{ marginBottom: 8 }}>
         <span className="section-label" style={{ display: 'block' }}>Name</span>
         <input className="field" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Garden supper poster" autoFocus />
@@ -56,11 +72,14 @@ export function NewDesignDialog({ onCreate, onCancel }) {
           Create
         </button>
       </div>
+      {onTemplates && (
+        <button className="btn-secondary" style={{ width: '100%', marginTop: 8 }} onClick={onTemplates}>Start from a template</button>
+      )}
     </Scrim>
   );
 }
 
-export function DesignsSheet({ designs, currentId, onOpen, onNew, onDelete, onRename, onClose }) {
+export function DesignsSheet({ designs, currentId, onOpen, onNew, onDelete, onRename, onDuplicate, onClose }) {
   const [renaming, setRenaming] = useState(null);
   return (
     <Scrim onClose={onClose} labelledBy="designs-title">
@@ -87,6 +106,10 @@ export function DesignsSheet({ designs, currentId, onOpen, onNew, onDelete, onRe
                 </button>
                 <button className="btn-secondary" style={{ minHeight: 44, minWidth: 44 }} aria-label={'Rename ' + d.name} onClick={() => setRenaming(d.id)}>
                   {icons.text({ width: 18, height: 18 })}
+                </button>
+                <button className="btn-secondary" style={{ minHeight: 44, minWidth: 44 }} aria-label={'Duplicate ' + d.name}
+                  onClick={() => onDuplicate(d.id)}>
+                  {icons.copy({ width: 18, height: 18 })}
                 </button>
                 <button className="btn-secondary" style={{ minHeight: 44, minWidth: 44 }} aria-label={'Delete ' + d.name}
                   onClick={() => onDelete(d.id)}>
