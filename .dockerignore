@@ -3,4 +3,4 @@
 .git
 .claude
 node_modules
-public/tailwind.css
+dist

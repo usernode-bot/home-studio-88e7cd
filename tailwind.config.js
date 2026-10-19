@@ -18,8 +18,9 @@ module.exports = {
   // regex over source text, so it finds class names written as whole
   // literals — including ones inside JS strings in these files.
   content: [
-    './public/**/*.html',
-    './public/**/*.js',
+    './web/index.html',
+    './web/src/**/*.{js,jsx}',
+    './public/screens.css',
   ],
 
   // Classes this app builds dynamically (if it ever does) go here, since the
@@ -55,6 +56,7 @@ module.exports = {
         danger: token('danger'),
         'on-danger': token('on-danger'),
         focus: token('focus'), // the keyboard focus ring
+        guide: token('guide'), // live alignment lines and their tags
       },
       // The type scale: four sizes, and nothing in between.
       fontSize: {

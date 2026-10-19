@@ -7,5 +7,9 @@
   "governance": {
     "preset": "you_or_the_group"
   },
-  "tests": []
+  "tests": [
+    { "path": "/", "expectText": "No designs yet" },
+    { "path": "/?demo=1", "expectText": "Garden supper", "visual": true, "impact": ["web/**"] },
+    { "path": "/?demo=1", "expectSelector": "[data-layers] li" }
+  ]
 }

@@ -1,0 +1,158 @@
+/* The screens the spec drew, carried over by the platform before the first
+   version was built (screen 1 is public/index.html's main screen; screen 2,
+   if any, its <template data-spec-screen="2">). Colours are the design kit's
+   tokens, rgb(var(--accent)), so they follow the light and the dark look. */
+
+/* Each screen is one centred column: the phone width it was drawn at grows
+   to a readable column on a wider window, never rows and buttons stretched
+   across the window. Remove this only for an app that fills the window by
+   design, such as a map. */
+[data-spec-screen] {
+  width: 100%;
+  max-width: 42rem;
+  margin-inline: auto;
+}
+
+.app {
+  position: relative;
+  width: 100%;
+  min-height: 1090px;
+  background: rgb(var(--ground));
+  color: rgb(var(--fg));
+  font-family: system-ui,-apple-system,"Segoe UI",sans-serif;
+  font-size: 16px;
+  line-height: 24px;
+  overflow: hidden;
+}
+
+.app * {box-sizing:border-box;margin:0}
+
+.top {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: rgb(var(--surface));
+  border-bottom: 1px solid rgb(var(--line));
+}
+
+.top h1 {font-size:20px;line-height:28px;font-weight:600}
+
+.sub {font-size:14px;line-height:20px;color:rgb(var(--muted))}
+
+.ib {width:44px;height:44px;border-radius:8px;border:1px solid rgb(var(--line));background:rgb(var(--surface));display:flex;align-items:center;justify-content:center;color:rgb(var(--fg))}
+
+.ib svg,.tool svg {width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+.toolbar {display:flex;align-items:center;gap:4px;padding:6px 12px;background:rgb(var(--surface));border-bottom:1px solid rgb(var(--line))}
+
+.tool {width:44px;height:44px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:rgb(var(--fg));border:0;background:none}
+
+.tool.on {background:rgb(var(--accent));color:rgb(var(--on-accent))}
+
+.sep {width:1px;height:28px;background:rgb(var(--line));margin:0 4px}
+
+.btn-primary {display:inline-flex;min-height:44px;align-items:center;justify-content:center;gap:8px;padding:0 16px;border-radius:8px;background:rgb(var(--accent));color:rgb(var(--on-accent));font-weight:500;font-size:16px;border:0;white-space:nowrap}
+
+.btn-secondary {display:inline-flex;min-height:44px;align-items:center;justify-content:center;padding:0 16px;border-radius:8px;border:1px solid rgb(var(--line));background:rgb(var(--surface));font-weight:500;white-space:nowrap}
+
+.pages {display:flex;gap:8px;padding:10px 0 10px 16px;font-size:14px;line-height:20px;align-items:center;overflow-x:auto}
+
+.pg {padding:6px 12px;border-radius:8px;border:1px solid rgb(var(--line));background:rgb(var(--surface));display:inline-flex;align-items:center;min-height:44px;white-space:nowrap}
+
+.pages .sub {white-space:nowrap;margin-right:16px}
+
+.pg.on {border-color:rgb(var(--accent));color:rgb(var(--accent));font-weight:600}
+
+.work {position:relative;height:430px;background:rgb(var(--raised));background-image:radial-gradient(rgb(var(--line)) 1px,transparent 1px);background-size:16px 16px;border-block:1px solid rgb(var(--line))}
+
+.art {position:absolute;left:50px;top:28px;width:290px;height:374px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.2);overflow:hidden}
+
+.el {position:absolute}
+
+.sel {position:absolute;width:118px;height:68px;border:1.5px solid rgb(var(--accent));transform:rotate(-4deg)}
+
+.h {position:absolute;width:10px;height:10px;background:#fff;border:1.5px solid rgb(var(--accent))}
+
+.rot {position:absolute;width:14px;height:14px;border-radius:50%;border:1.5px solid rgb(var(--accent));background:rgb(var(--surface))}
+
+.gl {position:absolute;background:rgb(var(--guide))}
+
+.tag {position:absolute;background:rgb(var(--guide));color:#fff;font-size:12px;line-height:16px;padding:2px 6px;border-radius:4px}
+
+.zoom {position:absolute;right:12px;bottom:10px;display:flex;align-items:center;background:rgb(var(--surface));border:1px solid rgb(var(--line));border-radius:8px;font-size:14px;line-height:20px}
+
+.zoom span {min-width:36px;height:36px;display:flex;align-items:center;justify-content:center;padding:0 6px}
+
+.panel {padding:16px}
+
+.section-label {font-size:14px;line-height:20px;font-weight:500;color:rgb(var(--muted));margin:0 4px 8px}
+
+.list {border:1px solid rgb(var(--line));background:rgb(var(--surface));border-radius:12px;overflow:hidden;list-style:none;padding:0}
+
+.list-row {display:flex;align-items:center;gap:12px;min-height:44px;padding:8px 16px;border-top:1px solid rgb(var(--line))}
+
+.list-row:first-child {border-top:0}
+
+.list-row.on {background:rgb(var(--raised));box-shadow:inset 3px 0 rgb(var(--accent))}
+
+.list-row svg {width:20px;height:20px;fill:none;stroke:rgb(var(--muted));stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+.list-row span:last-child {margin-left:auto;font-size:14px;color:rgb(var(--muted))}
+
+.grid {display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;padding:12px}
+
+.f {border:1px solid rgb(var(--line));border-radius:8px;padding:0 10px;min-height:44px;font-size:14px;line-height:20px;display:flex;align-items:center;justify-content:space-between;gap:4px;background:rgb(var(--surface))}
+
+.f b {font-weight:400;color:rgb(var(--muted));overflow-wrap:anywhere}
+
+.sw {width:22px;height:22px;border-radius:6px;border:1px solid rgb(var(--line));background:#1f6f5c}
+
+/* ── First-version behaviour additions ──────────────────────────────────
+   The drawn screens stand; what follows makes them work as a real app:
+   fields inside the property grid, the text editor over a text element,
+   the responsive layout (drawn phone order; on a wide window the layers
+   sit left of the canvas and the properties right of it), and dialogs. */
+
+.app { display: flex; flex-direction: column; min-height: 100vh; overflow: visible; }
+
+.f input, .f select {
+  border: 0; background: none; padding: 0; margin: 0; font: inherit;
+  color: inherit; text-align: right; outline: none; flex: 1;
+  min-width: 0; height: auto;
+}
+.f input[type='color'] { flex: 0 0 28px; width: 28px; height: 28px; padding: 0; border: 1px solid rgb(var(--line)); border-radius: 6px; }
+.zoom button { background: none; border: 0; font: inherit; color: inherit; cursor: pointer; min-width: 36px; min-height: 36px; padding: 0 6px; }
+.title-btn { background: none; border: 0; padding: 0; font: inherit; color: inherit; cursor: pointer; }
+.text-editor { background: transparent; border: 1.5px solid rgb(var(--accent)); border-radius: 4px; resize: none; outline: none; padding: 0; overflow: hidden; z-index: 5; }
+.align-row { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
+.tool:disabled, .ib:disabled, .pg:disabled, .btn-primary:disabled, .btn-secondary:disabled { opacity: 0.4; cursor: default; }
+
+.dialog-scrim { position: fixed; inset: 0; background: rgb(0 0 0 / 0.35); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 20; }
+.dialog { width: 100%; max-width: 20rem; max-height: 80vh; overflow: auto; }
+
+/* The empty and storage-error blocks sit centred in the canvas area. */
+.work > .state-empty, .work > .state-error {
+  position: absolute; inset: 0; z-index: 2;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 8px; padding: 16px; text-align: center;
+}
+/* With no design the workspace takes the rest of the window. */
+.work[data-empty] { flex: 1 1 auto; min-height: 60vh; height: auto; }
+
+/* A secondary button that carries only an icon (Delete). */
+.btn-secondary svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+
+/* Phone: the drawn order, canvas above the two panels. Wide: layers left
+   of the canvas, properties right of it, canvas fills the middle. */
+.main { display: contents; }
+.work { order: 2; }
+.panel { order: 3; }
+
+@media (min-width: 1024px) {
+  [data-spec-screen] { max-width: none; }
+  .main { display: flex; flex: 1 1 auto; min-height: 0; }
+  .panel.layers { order: 0; width: 260px; flex: none; border-right: 1px solid rgb(var(--line)); }
+  .panel.props { order: 2; width: 320px; flex: none; border-left: 1px solid rgb(var(--line)); overflow-y: auto; }
+  .work { order: 1; flex: 1 1 auto; height: auto; min-width: 0; }
+}
