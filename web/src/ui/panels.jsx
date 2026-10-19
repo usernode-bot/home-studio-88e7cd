@@ -157,6 +157,7 @@ export function Inspector({ state, dispatch, apply, page, onAddImage, imgError }
   const sel = state.selection.map((id) => page.elements.find((el) => el.id === id)).filter(Boolean);
   const one = sel.length === 1 ? sel[0] : null;
   const pageMode = sel.length === 0;
+  const [showAlign, setShowAlign] = useState(false);
 
   const set = (patch) => {
     const ids = state.selection;
@@ -241,14 +242,14 @@ export function Inspector({ state, dispatch, apply, page, onAddImage, imgError }
               <>
                 <ColorField label="Fill" value={one.fill} onCommit={(v) => setOne({ fill: v })} />
                 <ColorField label="Stroke" value={one.stroke || '#000000'} onCommit={(v) => setOne({ stroke: v, strokeWidth: one.strokeWidth || 1 })} />
-                <NumField label="Stroke w" value={one.strokeWidth || 0} onCommit={(v) => setOne({ strokeWidth: Math.max(0, v) })} />
+                <NumField label="Stroke width" value={one.strokeWidth || 0} onCommit={(v) => setOne({ strokeWidth: Math.max(0, v) })} />
                 {one.type === 'rect' && <NumField label="Corner" value={one.radius || 0} onCommit={(v) => setOne({ radius: Math.max(0, v) })} />}
               </>
             )}
             {one.type === 'line' && (
               <>
                 <ColorField label="Stroke" value={one.stroke} onCommit={(v) => setOne({ stroke: v })} />
-                <NumField label="Stroke w" value={one.strokeWidth || 0} onCommit={(v) => setOne({ strokeWidth: Math.max(1, v) })} />
+                <NumField label="Stroke width" value={one.strokeWidth || 0} onCommit={(v) => setOne({ strokeWidth: Math.max(1, v) })} />
               </>
             )}
             {one.type === 'text' && (
@@ -276,7 +277,7 @@ export function Inspector({ state, dispatch, apply, page, onAddImage, imgError }
               </>
             )}
           </div></div>
-          {state.selection.length > 1 && (
+          {(state.selection.length > 1 || showAlign) && sel.length > 0 && (
             <div className="align-row" data-align>
               {[['left', 'Left'], ['hcenter', 'Centre X'], ['right', 'Right'], ['top', 'Top'], ['vmiddle', 'Middle'], ['bottom', 'Bottom']].map(([mode, label]) => (
                 <button key={mode} className="tool" title={label} aria-label={'Align ' + label} onClick={() => align(mode)}>
@@ -299,9 +300,13 @@ export function Inspector({ state, dispatch, apply, page, onAddImage, imgError }
       )}
       {imgError && <div className="sub" style={{ padding: '0 4px 8px' }}>{imgError}</div>}
       <div style={{ display: 'flex', gap: 8, marginTop: 12 }}>
-        <button className="btn-primary" style={{ flex: 1 }} onClick={onAddImage}>Add image</button>
+        <button type="button" className="btn-primary" style={{ flex: 1 }} onClick={onAddImage}>Add image</button>
         {sel.length > 0 && (
-          <button className="btn-secondary" onClick={remove} aria-label="Delete">
+          <button type="button" className="btn-secondary" style={{ flex: 1 }} aria-expanded={showAlign}
+            aria-label="Align" title="Align the selection" onClick={() => setShowAlign((s) => !s)}>Align</button>
+        )}
+        {sel.length > 0 && (
+          <button type="button" className="btn-secondary" onClick={remove} aria-label="Delete">
             {icons.trash({})}
           </button>
         )}

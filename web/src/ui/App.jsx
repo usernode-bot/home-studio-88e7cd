@@ -349,7 +349,7 @@ export default function App() {
         </div>
       )}
       {demo && (
-        <div className="sub" data-usernode-demo-note style={{ padding: '8px 16px 0' }}>
+        <div className="sub" data-usernode-demo-note style={{ padding: '8px 16px' }}>
           Staging demo: sample designs, kept apart from your own.
         </div>
       )}
@@ -382,11 +382,19 @@ export default function App() {
       )}
       {empty && (
         <div className="work" data-empty>
-          <div className="state-empty">
-            <h2 className="text-heading">No designs yet</h2>
-            <p className="sub">Make a design at a size you set, then add text, shapes and images.</p>
-            <button className="btn-primary" onClick={() => setNewDialog(true)}>New design</button>
-          </div>
+          {dbBroken ? (
+            <div className="state-error" data-empty role="alert">
+              <h2 className="text-heading">Designs can't be saved on this device right now.</h2>
+              <p className="sub">Editing still works without saving.</p>
+              <button className="btn-secondary" onClick={() => boot()}>Retry</button>
+            </div>
+          ) : (
+            <div className="state-empty">
+              <h2 className="text-heading">No designs yet</h2>
+              <p className="sub">Make a design at a size you set, then add text, shapes and images.</p>
+              <button className="btn-primary" onClick={() => setNewDialog(true)}>New design</button>
+            </div>
+          )}
         </div>
       )}
       {!empty && (
