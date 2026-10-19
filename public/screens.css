@@ -215,3 +215,37 @@
   .dialog-scrim:has(.lib) { padding: 0; }
   .lib-grid { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); }
 }
+
+/* ── Phase 3: the File menu, export, versions, backup and notices ───────
+   Notices sit under the toolbar (a recovered copy, low storage, the result
+   of opening a file); menu rows are full-width buttons in a .list. */
+
+.notice {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 16px;
+  background: rgb(var(--surface)); border-bottom: 1px solid rgb(var(--line)); font-size: 14px; line-height: 20px;
+}
+.notice > span:first-child { flex: 1 1 16rem; }
+.notice.error > span:first-child { color: rgb(var(--danger)); }
+.notice-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.dialog.wide { max-width: 32rem; }
+.dialog-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.dialog-foot {
+  position: sticky; bottom: -16px; margin: 16px -16px -16px; padding: 12px 16px 16px;
+  background: rgb(var(--surface)); border-top: 1px solid rgb(var(--line)); display: flex; flex-direction: column; gap: 8px;
+}
+.menu-row {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; min-height: 56px; padding: 10px 16px;
+  text-align: left; background: none; border: 0; color: inherit; font: inherit; cursor: pointer;
+}
+.menu-row:hover:not(:disabled) { background: rgb(var(--raised)); }
+.menu-row:disabled { opacity: 0.45; cursor: default; }
+.menu-row:focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: -2px; }
+.version-row { display: flex; align-items: center; gap: 12px; min-height: 72px; padding: 8px 16px; }
+.version-row .preview { flex: none; border: 1px solid rgb(var(--line)); }
+.meter { display: block; width: 100%; height: 8px; margin-top: 6px; accent-color: rgb(var(--accent)); }
+.check { width: 22px; height: 22px; accent-color: rgb(var(--accent)); flex: none; }
+
+@media (max-width: 640px) {
+  .dialog.wide { max-width: none; max-height: 92vh; }
+}

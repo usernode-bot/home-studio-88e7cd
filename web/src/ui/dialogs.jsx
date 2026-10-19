@@ -1,11 +1,11 @@
 // The two dialogs: the new-design dialog and the designs sheet.
 
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { pageIsValid } from '../doc/model.js';
 import { icons } from './icons.jsx';
 import { SIZE_PRESETS } from '../assets/presets.js';
 
-function timeAgo(ts) {
+export function timeAgo(ts) {
   const s = Math.max(1, Math.round((Date.now() - ts) / 1000));
   if (s < 90) return 'just now';
   const m = Math.round(s / 60);
@@ -16,10 +16,16 @@ function timeAgo(ts) {
   return d + ' d ago';
 }
 
-function Scrim({ onClose, children, labelledBy }) {
+export function Scrim({ onClose, children, labelledBy, className = '', escape = false }) {
+  useEffect(() => {
+    if (!escape) return undefined;
+    const onKey = (e) => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [escape, onClose]);
   return (
     <div className="dialog-scrim" onPointerDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="dialog card" role="dialog" aria-modal="true" aria-labelledby={labelledBy}>
+      <div className={'dialog card ' + className} role="dialog" aria-modal="true" aria-labelledby={labelledBy}>
         {children}
       </div>
     </div>

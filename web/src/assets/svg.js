@@ -37,6 +37,9 @@ export function sanitizeSvg(text) {
   s = s.replace(/<(script|foreignObject|iframe|object|embed|audio|video)[\s\S]*?<\/\1\s*>/gi, '');
   s = s.replace(/<(script|foreignObject|iframe|object|embed|audio|video)\b[^>]*\/?>/gi, '');
   s = s.replace(/\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '');
+  // Animations that would rewrite a link, and style sheets that pull in others.
+  s = s.replace(/<(set|animate)\b[^>]*attributeName\s*=\s*["']?(xlink:)?href\b[^>]*>/gi, '');
+  s = s.replace(/@import[^;<]*;?/gi, '');
   s = s.replace(/\s+(xlink:href|href)\s*=\s*("([^"]*)"|'([^']*)')/gi, (m, attr, _q, a, b) => {
     const v = (a ?? b ?? '').trim();
     return v.startsWith('#') || /^data:image\/(png|jpe?g|gif|webp);/i.test(v) ? m : '';

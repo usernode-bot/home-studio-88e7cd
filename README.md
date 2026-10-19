@@ -51,7 +51,34 @@ no accounts, no network features, no paid anything.
   duplicate (with its own copies of its images) and delete.
 - **Pages.** Any number, each with its own name, size and background.
 - **Undo, redo, autosave.** One history entry per finished gesture; designs
-  autosave to IndexedDB on this device about a second after each change.
+  autosave to IndexedDB on this device about a second after each change, and
+  straight away when the page is hidden or closed.
+- **File menu** (the document button in the header):
+  - **Export** PNG, JPEG, SVG or PDF: all pages, this page or chosen pages
+    (several images come as one ZIP); PNG and JPEG at 0.5× to 4× with the
+    DPI written into the file; transparent backgrounds for PNG and SVG;
+    JPEG and PDF quality; PDF at 96, 150 or 300 DPI, and print-ready PDF
+    (300 DPI, 3 mm bleed, trim and bleed boxes, crop marks). A PDF can carry
+    an editable copy of the design, so Home Studio reopens it as a design.
+  - **Open a file:** images (PNG, JPEG, GIF, WebP; AVIF, BMP, ICO, HEIC and
+    TIFF where the browser can read them, turned into PNG), SVGs (cleaned),
+    PDFs (each page a picture, via pdf.js) and Home Studio files.
+  - **Download project file:** one `.homestudio.json` file with the design's
+    pages, layers, images, imported fonts and metadata, versioned and checked
+    field by field when it is opened again.
+  - **Version history:** a version every 10 minutes while editing (the newest
+    30 kept), versions you save yourself, and going back to any of them (undo
+    brings back what you had).
+  - **Backup and storage:** every design, image, version and library item in
+    one `.homestudio-backup.json` file; restoring adds what is missing and
+    keeps the newer copy of a design; space used, a warning when it runs low,
+    and asking the browser to keep the designs.
+- **Crash recovery.** Each change is also copied to localStorage at once, so
+  work from a tab that crashed before the autosave is offered back on the
+  next start.
+- **Offline.** After the first visit a service worker keeps the app's files
+  (and the bundled fonts' Latin files), so the editor opens and works with no
+  connection.
 
 ## Architecture
 
@@ -73,7 +100,12 @@ div), so the selection handles and guides need no rendering library.
 | `web/src/render/ElementView.jsx` | Draws one element with all its styles; memoised so an edit redraws only what changed |
 | `web/src/render/PagePreview.jsx` | Library previews, drawn only once scrolled into view |
 | `web/src/ui/` | `App.jsx` (shell, toolbar, page tabs, shortcuts, autosave wiring, states), `panels.jsx` (layers, inspector), `styleControls.jsx` (inspector style sections), `Library.jsx` (its own lazily loaded chunk), `dialogs.jsx`, `icons.jsx` |
-| `web/src/persist/db.js` | IndexedDB stores (`designs`, `images` as Blobs, `assets` for imports, `components`, `prefs` for favourites), duplication, the 800 ms debounced autosave |
+| `web/src/persist/db.js` | IndexedDB stores (`designs`, `images` as Blobs, `assets` for imports, `components`, `prefs` for favourites, `versions`), duplication, the 800 ms debounced autosave, version history, gathering and restoring projects and backups |
+| `web/src/persist/recovery.js`, `storage.js` | The crash-recovery copy in localStorage; space used and the low-space warning |
+| `web/src/export/` | `svg.js` (a page as standalone SVG: the one renderer behind every export), `render.js` (fonts and images embedded, drawn onto a canvas, each file read back before it is offered), `pdf.js` (the PDF writer: pages, bleed, crop marks, attached design), `imagemeta.js` (PNG and JPEG DPI), `options.js` (sizes, limits, file names) |
+| `web/src/io/` | `project.js` (the versioned file format and its validation), `zip.js`, `binary.js` (base64, CRC-32), `download.js` |
+| `web/src/import/pdf.js` | Opening PDFs with pdf.js, loaded only when a PDF is opened |
+| `web/sw.js`, `build/sw-plugin.js` | The service worker and the build step that writes its list of files into `dist/sw.js` |
 | `web/src/demo.js` | Staging demo designs (`?demo=1` on staging only, separate `home-studio-demo` database) |
 
 Document model: a design has pages; a page has `elements` (bottom first) and
@@ -86,7 +118,7 @@ their children with coordinates relative to the group's own origin.
 ```sh
 npm install
 npm run build   # vite build → dist/
-npm test        # vitest: model, history, snapping, alignment, shortcuts, styles, assets, storage
+npm test        # vitest, including exports reopened with an XML parser, pdf.js and zlib
 npm start       # serves dist/ (the built app) on :3000
 ```
 
@@ -108,7 +140,8 @@ Bundled assets, each with its licence and attribution recorded in
 All dependencies are permissively licensed: react and react-dom (MIT),
 vite and @vitejs/plugin-react (MIT), idb (ISC), vitest (MIT), tailwindcss,
 postcss and autoprefixer (MIT), express (MIT), pg (MIT), jsonwebtoken (MIT),
-lucide (ISC), the @fontsource packages (OFL 1.1), fake-indexeddb (Apache 2.0,
-tests only).
+lucide (ISC), the @fontsource packages (OFL 1.1), pdf.js (pdfjs-dist,
+Apache 2.0, bundled into the PDF-opening chunk), fake-indexeddb (Apache 2.0,
+tests only), @xmldom/xmldom (MIT, tests only).
 This app is free and open source; no paid features, no watermarks, no
 artificial quotas, no mandatory accounts.

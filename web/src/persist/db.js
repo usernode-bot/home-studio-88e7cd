@@ -2,20 +2,28 @@
 // the `designs` store (keyPath id), uploaded image files as Blobs in
 // `images`. Version 2 adds the library's own stores: `assets` (images, SVGs
 // and fonts a person imported), `components` (saved reusable pieces) and
-// `prefs` (favourites). The staging demo writes to its own database,
-// `home-studio-demo`, so demo designs never mix with a viewer's own.
+// `prefs` (favourites). Version 3 adds `versions`, each design's earlier
+// versions (indexed by designId). The staging demo writes to its own
+// database, `home-studio-demo`, so demo designs never mix with a viewer's own.
 
 import { openDB } from 'idb';
 import { uid, imageIdsIn, reidElement } from '../doc/model.js';
+import { blobToBytes } from '../io/binary.js';
+import { freshCopy } from '../io/project.js';
 
-function upgrade(db) {
+function upgrade(db, _oldVersion, _newVersion, tx) {
   for (const name of ['designs', 'images', 'assets', 'components']) {
     if (!db.objectStoreNames.contains(name)) db.createObjectStore(name, { keyPath: 'id' });
   }
   if (!db.objectStoreNames.contains('prefs')) db.createObjectStore('prefs');
+  if (!db.objectStoreNames.contains('versions')) {
+    db.createObjectStore('versions', { keyPath: 'id' }).createIndex('designId', 'designId');
+  } else if (!tx.objectStore('versions').indexNames.contains('designId')) {
+    tx.objectStore('versions').createIndex('designId', 'designId');
+  }
 }
 
-export const DB_VERSION = 2;
+export const DB_VERSION = 3;
 export async function openDesignsDb(demo, name) {
   return openDB(name || (demo ? 'home-studio-demo' : 'home-studio'), DB_VERSION, { upgrade });
 }
@@ -36,6 +44,7 @@ export async function getDesign(db, id) {
 
 export async function deleteDesign(db, id) {
   await db.delete('designs', id);
+  for (const v of await listVersions(db, id)) await db.delete('versions', v.id);
   // Deleting a design also deletes its images: collect every imageId the
   // design's elements reference, then drop those blobs.
   const design = await getDesign(db, id);
@@ -183,10 +192,161 @@ export function createAutoSaver(save) {
       pending = doc;
       if (!timer) timer = setTimeout(run, 800);
     },
+    // Save what is waiting now (the page is being hidden or closed).
+    flush() {
+      if (!timer) return Promise.resolve();
+      clearTimeout(timer);
+      return run();
+    },
     cancel() {
       if (timer) clearTimeout(timer);
       timer = null;
       pending = null;
     },
   };
+}
+
+// ── Version history ──────────────────────────────────────────────────────
+// A version: { id, designId, createdAt, label, auto, design (a full copy,
+// images by id: their blobs stay in `images` with the design) }. Automatic
+// versions are kept to the newest VERSIONS_AUTO_KEEP per design; versions
+// a person saved are kept until the design is deleted.
+
+export const VERSIONS_AUTO_KEEP = 30;
+export const AUTO_VERSION_MS = 10 * 60 * 1000;
+
+export async function listVersions(db, designId) {
+  if (!db) return [];
+  const all = await db.getAllFromIndex('versions', 'designId', designId);
+  return all.sort((a, b) => b.createdAt - a.createdAt);
+}
+
+export async function addVersion(db, design, label, auto = false) {
+  const v = { id: uid(), designId: design.id, createdAt: Date.now(), label, auto, design: structuredClone(design) };
+  await db.put('versions', v);
+  if (auto) {
+    const autos = (await listVersions(db, design.id)).filter((x) => x.auto);
+    for (const old of autos.slice(VERSIONS_AUTO_KEEP)) await db.delete('versions', old.id);
+  }
+  return v;
+}
+
+export async function deleteVersion(db, id) {
+  await db.delete('versions', id);
+}
+
+// Whether an automatic version is due: the design changed since the last
+// version, and the last one is older than AUTO_VERSION_MS.
+export function autoVersionDue(design, last, now = Date.now()) {
+  if (!design) return false;
+  if (!last) return true;
+  if (now - last.createdAt < AUTO_VERSION_MS) return false;
+  return JSON.stringify(last.design.pages) !== JSON.stringify(design.pages) || last.design.name !== design.name;
+}
+
+// ── Project files and backups ────────────────────────────────────────────
+
+async function imageFiles(getImageBlob, ids) {
+  const out = [];
+  for (const id of ids) {
+    const blob = await getImageBlob(id);
+    if (blob) out.push({ id, type: blob.type || 'image/png', bytes: await blobToBytes(blob) });
+  }
+  return out;
+}
+
+function fontKeysIn(pagesList) {
+  const keys = new Set();
+  const visit = (els) => {
+    for (const el of els) {
+      if (el.type === 'text' && typeof el.font === 'string' && el.font.startsWith('user:')) keys.add(el.font.slice(5));
+      if (el.children) visit(el.children);
+    }
+  };
+  for (const p of pagesList) visit(p.elements);
+  return keys;
+}
+
+// What a project file holds: the design, its images and the imported fonts
+// its text uses. `getImage(id)` and `getAsset(id)` read them (from this
+// database, or from what the open design holds when storage is broken).
+export async function collectProject(design, { getImage: getImageBlob, getAsset }) {
+  const ids = new Set();
+  for (const p of design.pages) for (const id of imageIdsIn(p.elements)) ids.add(id);
+  const fonts = [];
+  for (const fid of fontKeysIn(design.pages)) {
+    const a = await getAsset(fid);
+    if (a && a.blob) fonts.push({ id: a.id, name: a.name, type: a.blob.type || '', bytes: await blobToBytes(a.blob) });
+  }
+  return { design: structuredClone(design), images: await imageFiles(getImageBlob, ids), fonts };
+}
+
+// Everything on this device, for a backup file.
+export async function collectBackup(db) {
+  const designs = await listDesigns(db);
+  const versions = await db.getAll('versions');
+  const components = await listComponents(db);
+  const ids = new Set();
+  for (const d of [...designs, ...versions.map((v) => v.design)]) for (const p of d.pages) for (const id of imageIdsIn(p.elements)) ids.add(id);
+  for (const c of components) for (const id of imageIdsIn(c.elements)) ids.add(id);
+  const assets = [];
+  for (const a of await listAssets(db)) {
+    const { blob, ...rest } = a;
+    assets.push(blob ? { ...rest, type: blob.type || '', bytes: await blobToBytes(blob) } : rest);
+  }
+  return { designs, versions, components, assets, images: await imageFiles((id) => getImage(db, id), ids), favorites: [...(await getFavorites(db))] };
+}
+
+// A parsed project file saved as a new design on this device (its own image
+// copies, its imported fonts added to the library if they are new).
+// Resolves the saved design.
+export async function importProject(db, parsed) {
+  const { design, images } = freshCopy(parsed);
+  for (const img of images) await putImage(db, img.id, new Blob([img.bytes], { type: img.type }));
+  for (const f of parsed.fonts || []) {
+    if (await db.get('assets', f.id)) continue;
+    await putAsset(db, { id: f.id, kind: 'font', name: f.name, createdAt: Date.now(), blob: new Blob([f.bytes], { type: f.type }) });
+  }
+  await putDesign(db, design);
+  return design;
+}
+
+// Restore a parsed backup. A design already here is replaced only when the
+// backup's copy is newer; images, library files, components and versions
+// are added when missing. Resolves counts for the summary.
+export async function restoreBackup(db, parsed) {
+  const out = { added: 0, replaced: 0, kept: 0, library: 0, components: 0, versions: 0 };
+  for (const img of parsed.images) {
+    if (!(await db.get('images', img.id))) await putImage(db, img.id, new Blob([img.bytes], { type: img.type }));
+  }
+  for (const d of parsed.designs) {
+    const here = await getDesign(db, d.id);
+    if (!here) { await putDesign(db, d); out.added += 1; }
+    else if (d.updatedAt > here.updatedAt) { await putDesign(db, d); out.replaced += 1; }
+    else out.kept += 1;
+  }
+  for (const v of parsed.versions) {
+    if (!(await db.get('versions', v.id))) { await db.put('versions', { ...v, auto: false }); out.versions += 1; }
+  }
+  for (const a of parsed.assets) {
+    if (await db.get('assets', a.id)) continue;
+    const { bytes, type, ...rest } = a;
+    await putAsset(db, bytes ? { ...rest, blob: new Blob([bytes], { type }) } : rest);
+    out.library += 1;
+  }
+  for (const c of parsed.components) {
+    if (!(await db.get('components', c.id))) { await db.put('components', c); out.components += 1; }
+  }
+  const favs = await getFavorites(db);
+  for (const f of parsed.favorites) favs.add(f);
+  await db.put('prefs', [...favs], 'favorites');
+  return out;
+}
+
+export async function getPref(db, key) {
+  return db ? db.get('prefs', key) : undefined;
+}
+
+export async function setPref(db, key, value) {
+  await db.put('prefs', value, key);
 }

@@ -117,7 +117,7 @@ export default function Library({
         {tab === 'uploads' && (
           <div style={{ marginTop: 8 }}>
             <button className="btn-primary" onClick={() => importRef.current && importRef.current.click()}>Import files</button>
-            <p className="sub" style={{ marginTop: 4 }}>Images (PNG, JPEG, GIF, WebP), SVGs and fonts (TTF, OTF, WOFF). They stay on this device.</p>
+            <p className="sub" style={{ marginTop: 4 }}>Images (PNG, JPEG, GIF, WebP, AVIF, BMP and more), SVGs and fonts (TTF, OTF, WOFF). They stay on this device.</p>
             {importError && <p className="sub" role="alert" style={{ color: 'rgb(var(--danger))' }}>{importError}</p>}
             <input ref={importRef} type="file" multiple hidden accept={IMPORT_ACCEPT}
               onChange={(e) => { const files = [...(e.target.files || [])]; e.target.value = ''; if (files.length) onImport(files); }} />

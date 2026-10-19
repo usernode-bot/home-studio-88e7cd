@@ -13,6 +13,8 @@
     { "path": "/?demo=1", "expectSelector": "[data-layers] li" },
     { "name": "Demo poster draws an SVG icon and a star shape", "path": "/?demo=1", "expectSelector": ".art [data-el=\"d-icon\"] img[src^=\"data:image/svg+xml\"]" },
     { "name": "Library opens on its templates", "path": "/?demo=1#library", "expectText": "Garden party invitation" },
-    { "name": "Library opens with no designs yet", "path": "/#library", "expectSelector": "[data-library] [data-item=\"tpl:quote-post\"] .preview > div:not(.skeleton)" }
+    { "name": "Library opens with no designs yet", "path": "/#library", "expectSelector": "[data-library] [data-item=\"tpl:quote-post\"] .preview > div:not(.skeleton)" },
+    { "name": "Header has the File menu for export, versions and backup", "path": "/?demo=1", "expectSelector": "[data-open-file-menu]" },
+    { "name": "Empty state offers opening a file", "path": "/", "expectText": "Open a file" }
   ]
 }
