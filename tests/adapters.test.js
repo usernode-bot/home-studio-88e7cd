@@ -2,7 +2,7 @@
 // adapters' field cleaning. All pure or IndexedDB-backed, no network.
 
 import 'fake-indexeddb/auto';
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { planSync, conflictCopyName, loadSyncPref, saveSyncPref, queueChange, SYNC_PREF } from '../web/src/persist/adapters/sync.js';
 import { enqueue, listOutbox, clearDesign, flushOutbox } from '../web/src/persist/adapters/queue.js';
 import { getAdapter, describeAdapter, ADAPTERS } from '../web/src/persist/adapters/index.js';
@@ -131,6 +131,7 @@ describe('outbox and queueing', () => {
     let rows = await listOutbox(db);
     expect(rows).toHaveLength(2);
     expect(rows[0].kind).toBe('design');
+    expect(rows[1].kind).toBe('delete');
     const sent = [];
     const r = await flushOutbox(db, async (row) => { sent.push(row.designId); });
     expect(r).toEqual({ sent: 2, failed: 0 });
@@ -138,6 +139,23 @@ describe('outbox and queueing', () => {
     expect(await listOutbox(db)).toHaveLength(0);
     rows = await listOutbox(db);
     expect(rows).toHaveLength(0);
+  });
+
+  it('keeps insertion order for rows queued in the same millisecond', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1700000000000);
+    try {
+      const db = await freshDb();
+      for (const id of ['a', 'b', 'c', 'd']) await enqueue(db, 'design', id, { v: id });
+      const rows = await listOutbox(db);
+      expect(rows.map((x) => x.designId)).toEqual(['a', 'b', 'c', 'd']);
+      const seqs = rows.map((x) => x.seq);
+      expect(seqs.every((s, i) => Number.isFinite(s) && (i === 0 || s > seqs[i - 1]))).toBe(true);
+      const sent = [];
+      await flushOutbox(db, async (row) => { sent.push(row.designId); });
+      expect(sent).toEqual(['a', 'b', 'c', 'd']);
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it('a failing row stays queued while the rest go out', async () => {

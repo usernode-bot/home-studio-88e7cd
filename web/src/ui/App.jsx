@@ -4,7 +4,7 @@
 // opening files, project files, version history, backup and storage),
 // crash recovery and the storage warnings.
 
-import React, { Suspense, lazy, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import React, { Suspense, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import Canvas from '../render/Canvas.jsx';
 import { LayersPanel, Inspector } from './panels.jsx';
 import { NewDesignDialog, DesignsSheet } from './dialogs.jsx';
@@ -24,7 +24,7 @@ import {
   componentElements, listVersions, addVersion, autoVersionDue, collectProject, collectBackup, importProject,
   restoreBackup, getPref, setPref,
 } from '../persist/db.js';
-import { writeJournal, readJournal, clearJournal, recoveryOffer } from '../persist/recovery.js';
+import { writeJournal, readJournal, clearJournal, recoveryOffer, dropJournal } from '../persist/recovery.js';
 import { storageStatus, askToPersist, isQuotaError } from '../persist/storage.js';
 import {
   parseHomeStudioFile, serializeProject, serializeBackup, freshCopy, PROJECT_SUFFIX, BACKUP_SUFFIX,
@@ -36,13 +36,14 @@ import {
   assetFromFile, classifyFile, elementForItem, applyBackground, placeOnPage, IMAGE_ACCEPT, baseName,
 } from '../assets/imports.js';
 import { svgSize } from '../assets/svg.js';
-import { buildDemoDesigns, buildDemoGallerySource } from '../demo.js';
 import { shortcutFor, arrowDelta } from '../tools/shortcuts.js';
 import { loadSyncPref, saveSyncPref, runSync, queueChange, listOutbox } from '../persist/adapters/sync.js';
 import { getAdapter } from '../persist/adapters/index.js';
 import { loadSources, addSource, removeSource } from '../gallery/sources.js';
 import { diffElements } from '../net/protocol.js';
 import { mergeDocs } from '../net/merge.js';
+import { retryable } from './lazy.js';
+import { ChunkBoundary } from './ErrorBoundary.jsx';
 
 const TOOLS = [
   ['select', 'Select', 'V'],
@@ -53,14 +54,21 @@ const TOOLS = [
 ];
 
 // The library is its own chunk: its catalog, templates and previews load
-// the first time someone opens it. The Phase 4 dialogs are lazy chunks too.
-const Library = lazy(() => import('./Library.jsx'));
-const GalleryDialog = lazy(() => import('./GalleryDialog.jsx'));
-const CollaborateDialog = lazy(() => import('./CollaborateDialog.jsx'));
-const RemoteStorageDialog = lazy(() => import('./RemoteStorageDialog.jsx'));
+// the first time someone opens it. The Phase 4 dialogs are lazy chunks
+// too, each through retryable() so a failed load can be tried again
+// (React.lazy caches the rejection) inside its ChunkBoundary.
+const libraryChunk = retryable(() => import('./Library.jsx'));
+const galleryChunk = retryable(() => import('./GalleryDialog.jsx'));
+const collabChunk = retryable(() => import('./CollaborateDialog.jsx'));
+const remoteChunk = retryable(() => import('./RemoteStorageDialog.jsx'));
 // The exporters load the first time someone exports, pdf.js the first time
 // a PDF is opened.
-const ExportDialog = lazy(() => import('./ExportDialog.jsx'));
+const exportChunk = retryable(() => import('./ExportDialog.jsx'));
+const Library = libraryChunk.Component;
+const GalleryDialog = galleryChunk.Component;
+const CollaborateDialog = collabChunk.Component;
+const RemoteStorageDialog = remoteChunk.Component;
+const ExportDialog = exportChunk.Component;
 const loadPdfImport = () => import('../import/pdf.js');
 
 const OPEN_ACCEPT = `${IMAGE_ACCEPT},image/svg+xml,.svg,application/pdf,.pdf,application/json,.json`;
@@ -82,7 +90,8 @@ const isRemoteHash = () => /^#remote\b/.test(window.location.hash);
 const snapDoc = (d) => ({
   name: d.name,
   pages: d.pages.map((p) => ({
-    id: p.id, name: p.name, background: p.background, width: p.width, height: p.height, elements: p.elements,
+    id: p.id, name: p.name, background: p.background, width: p.width, height: p.height,
+    gradient: p.gradient, pattern: p.pattern || null, elements: p.elements,
   })),
 });
 const pagesForState = (d) => d.pages.map((p) => ({ id: p.id, elements: p.elements }));
@@ -128,6 +137,7 @@ export default function App() {
   const [dbBroken, setDbBroken] = useState(false);
   const [designs, setDesigns] = useState([]);
   const [demo, setDemo] = useState(false);
+  const [demoGallery, setDemoGallery] = useState(null);
   const [saveState, setSaveState] = useState('saved');
   const [zoom, setZoom] = useState(1);
   const [view, setView] = useState({ x: 0, y: 0 });
@@ -172,6 +182,8 @@ export default function App() {
   const stateRef = useRef(state);
   stateRef.current = state;
   const sessionRef = useRef(null);
+  const loadedDocRef = useRef(null); // the design open() just put on screen: opening is not a change
+  const openSeq = useRef(0); // the latest open() call wins; older ones throw away their picture URLs
   const watchRef = useRef(null); // the doc snapshot to diff against; null means resync, send nothing
   const greetedRef = useRef(null); // peers the host has sent the full state to
   const collabOpenRef = useRef(false);
@@ -180,7 +192,19 @@ export default function App() {
   collabOpenRef.current = collabOpen;
   syncPrefRef.current = syncPref;
 
-  const demoGallery = useMemo(() => (demo ? buildDemoGallerySource() : null), [demo]);
+  // Notices are shown from callbacks declared throughout the component,
+  // so this lives at the top, before the first callback that uses it.
+  const showNotice = useCallback((tone, text, keep) => {
+    clearTimeout(noticeTimer.current);
+    setNotice(text ? { tone, text } : null);
+    if (text && !keep) noticeTimer.current = setTimeout(() => setNotice(null), tone === 'error' ? 10000 : 6000);
+  }, []);
+
+  // A lazy panel failed to load: close it, let the next open try a fresh
+  // chunk, and say so without touching the design.
+  const panelLoadFailed = useCallback((name) => {
+    showNotice('error', `${name} couldn't load. Check your connection, then try again. Your design is unchanged.`);
+  }, [showNotice]);
 
   // The IPFS adapter this device is connected to, when remote storage is
   // set up on one: what gallery publishing to an IPFS-compatible store
@@ -197,6 +221,7 @@ export default function App() {
 
   // ── Boot: staging demo, the database, the newest design ───────────────
   const open = useCallback(async (design, opts = {}) => {
+    const seq = ++openSeq.current;
     const map = {};
     if (dbLive.current) {
       const ids = new Set();
@@ -206,7 +231,23 @@ export default function App() {
         if (blob) map[id] = URL.createObjectURL(blob);
       }
     }
-    setImages(map);
+    // An older call finishing after a newer one: throw away its own URLs
+    // and leave the newer design alone.
+    if (seq !== openSeq.current) {
+      for (const url of Object.values(map)) URL.revokeObjectURL(url);
+      return;
+    }
+    // URLs already on screen for ids still needed are reused; the rest are
+    // released, so pictures of closed designs do not pile up in memory.
+    const prev = imagesRef.current;
+    const kept = {};
+    for (const id of Object.keys(prev)) {
+      if (map[id]) { kept[id] = prev[id]; delete map[id]; } else URL.revokeObjectURL(prev[id]);
+    }
+    setImages({ ...kept, ...map });
+    // Opening is not a change: every path that gets here has already
+    // stored the design, so the autosave and journal effects skip it.
+    loadedDocRef.current = design;
     dispatch({ type: 'load', doc: design, selection: opts.selection || [] });
     setPhase('ready');
   }, []);
@@ -235,17 +276,29 @@ export default function App() {
 
   const boot = useCallback(async () => {
     setPhase('loading');
+    // The staging demo is the only reason to ask the server anything at
+    // boot: without ?demo=1 in the URL there is no request at all, and the
+    // one that runs gives up after a few seconds.
+    const wantDemo = new URLSearchParams(window.location.search).get('demo') === '1';
     let staging = false;
-    try {
-      const res = await fetch('/api/env');
-      staging = (await res.json()).staging === true;
-    } catch { /* offline or plain local run: no demo */ }
-    const useDemo = staging && new URLSearchParams(window.location.search).get('demo') === '1';
+    if (wantDemo) {
+      try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 3000);
+        const res = await fetch('/api/env', { signal: ctrl.signal });
+        clearTimeout(timer);
+        staging = (await res.json()).staging === true;
+      } catch { /* offline or plain local run: no demo */ }
+    }
+    const useDemo = staging && wantDemo;
     setDemo(useDemo);
     dbName.current = useDemo ? 'home-studio-demo' : 'home-studio';
     try {
       const db = await openDesignsDb(useDemo);
       dbLive.current = db;
+      // The sample designs and the demo gallery are their own chunk: they
+      // are only ever needed on staging with ?demo=1.
+      const demoMod = useDemo ? await import('../demo.js') : null;
       // A copy of unsaved work left by a crash or a closed tab.
       const journal = journalStore() && readJournal(journalStore(), dbName.current);
       if (journal) {
@@ -256,7 +309,7 @@ export default function App() {
       setLastBackupAt((await getPref(db, 'lastBackupAt').catch(() => null)) || null);
       void storageStatus().then((st) => { if (st && st.level !== 'ok') setQuota({ level: st.level, dismissed: false }); });
       if (useDemo && !(await listDesigns(db)).length) {
-        for (const d of buildDemoDesigns()) await putDesign(db, d);
+        for (const d of demoMod.buildDemoDesigns()) await putDesign(db, d);
       }
       const list = await listDesigns(db);
       setDesigns(list);
@@ -265,6 +318,7 @@ export default function App() {
       setSyncPref(await loadSyncPref(db).catch(() => null));
       setGallerySources(await loadSources(db).catch(() => []));
       setOutbox(await listOutbox(db).catch(() => []));
+      if (useDemo) setDemoGallery(demoMod.buildDemoGallerySource());
       if (list.length) {
         const wantDemoSelection = useDemo && list[0].pages[0]?.elements.some((e) => e.id === 'd-block');
         await open(list[0], { selection: wantDemoSelection ? ['d-block'] : [] });
@@ -294,7 +348,10 @@ export default function App() {
       await putDesign(db, d);
       setSaveState('saved');
       if (!recoveryRef.current && journalStore()) clearJournal(journalStore(), dbName.current, d);
-      void refreshList();
+      // Replace the entry in memory instead of re-reading every design on
+      // the device after each save. Docs are never mutated, so keeping the
+      // just-saved reference is safe.
+      setDesigns((l) => [d, ...l.filter((x) => x.id !== d.id)]);
       // A remote store being set up: queue the finished edit for it.
       // Queueing never blocks editing and never blocks saving here.
       const sp = syncPrefRef.current;
@@ -317,10 +374,13 @@ export default function App() {
       const st = await storageStatus();
       if (st) setQuota((q) => (q.level === st.level ? q : { level: st.level, dismissed: false }));
     }
-  }), [refreshList, refreshOutbox]); // eslint-disable-line react-hooks/exhaustive-deps
+  }), [refreshOutbox]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (phase !== 'ready' || !state.doc) return;
+    // Opening a design is not a change: it is already stored, so it used
+    // to be saved again (and, with a remote store, uploaded untouched).
+    if (state.doc === loadedDocRef.current) { setSaveState('saved'); return; }
     setSaveState('saving');
     autoSaver.schedule(state.doc);
   }, [state.doc, phase, autoSaver]);
@@ -330,6 +390,8 @@ export default function App() {
   // copy is waiting for a decision, so it isn't overwritten.
   useEffect(() => {
     if (phase !== 'ready' || !state.doc || recovery || !journalStore()) return undefined;
+    // The just-opened design is unchanged: no unsaved copy to write.
+    if (state.doc === loadedDocRef.current) return undefined;
     const t = setTimeout(() => writeJournal(journalStore(), dbName.current, state.doc), 300);
     return () => clearTimeout(t);
   }, [state.doc, phase, recovery]);
@@ -399,7 +461,11 @@ export default function App() {
     const d = designs.find((x) => x.id === id);
     if (!d) return;
     if (!window.confirm(`Delete "${d.name}"? This can't be undone.`)) return;
+    // The design is going away: its pending autosave must not put it back
+    // without its images, and its unsaved copy must not be offered back.
+    autoSaver.drop(id);
     try { await deleteDesign(dbLive.current, id); } catch { /* nothing to clean up */ }
+    if (journalStore()) dropJournal(journalStore(), dbName.current, id);
     // A remote store being set up: tell it the design is gone. The copy
     // there is left alone when queueing fails.
     const sp = syncPrefRef.current;
@@ -415,7 +481,7 @@ export default function App() {
       if (rest.length) await open(rest[0]);
       else { dispatch({ type: 'load', doc: null }); setPhase('empty'); }
     }
-  }, [designs, open, refreshList]);
+  }, [designs, open, refreshList, autoSaver]);
 
   // ── Library: imports, inserting, templates, favourites ────────────────
   const currentPage = () => {
@@ -511,13 +577,18 @@ export default function App() {
   }, []);
 
   const chooseTemplate = useCallback(async (tpl) => {
-    const { instantiateTemplate } = await loadTemplates();
+    let tplMod;
+    try { tplMod = await loadTemplates(); } catch {
+      showNotice('error', "The template couldn't load. Check your connection, then try again. Your design is unchanged.");
+      return;
+    }
+    const { instantiateTemplate } = tplMod;
     const d = instantiateTemplate(tpl);
     try { if (dbLive.current) await putDesign(dbLive.current, d); } catch { /* keep editing */ }
     closeLibrary();
     await open(d);
     void refreshList();
-  }, [open, refreshList, closeLibrary]);
+  }, [open, refreshList, closeLibrary, showNotice]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const insertItem = useCallback(async (item) => {
     const p = currentPage();
@@ -618,12 +689,6 @@ export default function App() {
   }, [open, refreshList]);
 
   // ── File: notices, opening files, project files, backup, versions ─────
-  const showNotice = useCallback((tone, text, keep) => {
-    clearTimeout(noticeTimer.current);
-    setNotice(text ? { tone, text } : null);
-    if (text && !keep) noticeTimer.current = setTimeout(() => setNotice(null), tone === 'error' ? 10000 : 6000);
-  }, []);
-
   // Reads an image blob or an imported font from this device, or from what
   // the open design holds when storage is broken.
   const fileAccess = useMemo(() => ({
@@ -668,7 +733,12 @@ export default function App() {
 
   const openPdfFile = useCallback(async (file) => {
     showNotice('info', `Opening ${file.name}…`, true);
-    const { openPdf, PDF_MAX_PAGES } = await loadPdfImport();
+    let pdfMod;
+    try { pdfMod = await loadPdfImport(); } catch {
+      showNotice('error', "The PDF opener couldn't load. Check your connection, then try again. Your design is unchanged.");
+      return;
+    }
+    const { openPdf, PDF_MAX_PAGES } = pdfMod;
     const pdf = await openPdf(new Uint8Array(await file.arrayBuffer()));
     try {
       if (pdf.projectText) {
@@ -1044,6 +1114,11 @@ export default function App() {
       if (p.background !== b.background) patch.background = p.background;
       if (p.width !== b.width) patch.width = p.width;
       if (p.height !== b.height) patch.height = p.height;
+      // A page gradient the room does not have yet. A pattern is shared
+      // only when it was removed: adding one carries drawings that would
+      // need their own check on the way in.
+      if (p.gradient && JSON.stringify(p.gradient) !== JSON.stringify(b.gradient)) patch.gradient = p.gradient;
+      if (!p.pattern && b.pattern) patch.pattern = null;
       if (Object.keys(patch).length) toSend.push([p.id, { t: 'pageSet', patch }]);
     }
     for (const b of before.pages) {
@@ -1360,10 +1435,12 @@ export default function App() {
           onRemote={() => { setFileMenu(false); openRemote(); }} />
       )}
       {exportOpen && doc && p2 && (
-        <Suspense fallback={<div className="dialog-scrim"><div className="dialog card wide" aria-busy="true"><div className="skeleton" style={{ height: 28, width: 120 }} /></div></div>}>
-          <ExportDialog design={doc} pageId={p2.id} onClose={() => setExportOpen(false)} onDownload={downloadBlob}
-            deps={{ getImage: fileAccess.getImage, getFontBlob: fileAccess.getFontBlob, project: () => collectProject(stateRef.current.doc, fileAccess) }} />
-        </Suspense>
+        <ChunkBoundary onError={() => { exportChunk.reset(); setExportOpen(false); panelLoadFailed('Export'); }}>
+          <Suspense fallback={<div className="dialog-scrim"><div className="dialog card wide" aria-busy="true"><div className="skeleton" style={{ height: 28, width: 120 }} /></div></div>}>
+            <ExportDialog design={doc} pageId={p2.id} onClose={() => setExportOpen(false)} onDownload={downloadBlob}
+              deps={{ getImage: fileAccess.getImage, getFontBlob: fileAccess.getFontBlob, project: () => collectProject(stateRef.current.doc, fileAccess) }} />
+          </Suspense>
+        </ChunkBoundary>
       )}
       {versionsOpen && doc && (
         <VersionsDialog designName={doc.name} images={images} load={loadVersions} onSave={saveVersion} onRestore={restoreVersion}
@@ -1383,35 +1460,43 @@ export default function App() {
           onDuplicate={(id) => { setSheet(false); void copyDesign(id); }} />
       )}
       {libraryOpen && (
-        <Suspense fallback={<div className="dialog-scrim"><div className="dialog card lib" aria-busy="true"><div className="skeleton" style={{ height: 28, width: 120 }} /></div></div>}>
-          <Library hasDesign={!empty} favorites={favorites} uploads={uploads} components={components} importError={importError}
-            onToggleFavorite={toggleFavorite} onUseTemplate={chooseTemplate} onInsert={insertItem}
-            onApplyBackground={applyPageBackground} onUseFont={chooseFont} onImport={(files) => importFiles(files, false)}
-            onDeleteUpload={removeUpload} onDeleteComponent={removeComponent} onClose={closeLibrary} />
-        </Suspense>
+        <ChunkBoundary onError={() => { libraryChunk.reset(); closeLibrary(); panelLoadFailed('The library'); }}>
+          <Suspense fallback={<div className="dialog-scrim"><div className="dialog card lib" aria-busy="true"><div className="skeleton" style={{ height: 28, width: 120 }} /></div></div>}>
+            <Library hasDesign={!empty} favorites={favorites} uploads={uploads} components={components} importError={importError}
+              onToggleFavorite={toggleFavorite} onUseTemplate={chooseTemplate} onInsert={insertItem}
+              onApplyBackground={applyPageBackground} onUseFont={chooseFont} onImport={(files) => importFiles(files, false)}
+              onDeleteUpload={removeUpload} onDeleteComponent={removeComponent} onClose={closeLibrary} />
+          </Suspense>
+        </ChunkBoundary>
       )}
       {galleryOpen && (
-        <Suspense fallback={<div className="dialog-scrim"><div className="dialog card lib" aria-busy="true"><div className="skeleton" style={{ height: 28, width: 120 }} /></div></div>}>
-          <GalleryDialog hasDesign={!empty} design={doc}
-            getProject={() => collectProject(stateRef.current.doc, fileAccess)}
-            sources={gallerySources} demoSource={demoGallery} ipfs={ipfsLink || {}}
-            onAddSource={addGallerySource} onRemoveSource={removeGallerySource}
-            onRemix={remixGalleryItem} onClose={closeGallery} />
-        </Suspense>
+        <ChunkBoundary onError={() => { galleryChunk.reset(); closeGallery(); panelLoadFailed('The community gallery'); }}>
+          <Suspense fallback={<div className="dialog-scrim"><div className="dialog card lib" aria-busy="true"><div className="skeleton" style={{ height: 28, width: 120 }} /></div></div>}>
+            <GalleryDialog hasDesign={!empty} design={doc}
+              getProject={() => collectProject(stateRef.current.doc, fileAccess)}
+              sources={gallerySources} demoSource={demoGallery} ipfs={ipfsLink || {}}
+              onAddSource={addGallerySource} onRemoveSource={removeGallerySource}
+              onRemix={remixGalleryItem} onClose={closeGallery} />
+          </Suspense>
+        </ChunkBoundary>
       )}
       {collabOpen && (
-        <Suspense fallback={<div className="dialog-scrim"><div className="dialog card" aria-busy="true"><div className="skeleton" style={{ height: 28, width: 120 }} /></div></div>}>
-          <CollaborateDialog activeSession={session} onStart={startSession} onLeave={leaveSession}
-            onAppEvent={handleSessionEvent} onClose={closeCollab} />
-        </Suspense>
+        <ChunkBoundary onError={() => { collabChunk.reset(); closeCollab(); panelLoadFailed('Collaboration'); }}>
+          <Suspense fallback={<div className="dialog-scrim"><div className="dialog card" aria-busy="true"><div className="skeleton" style={{ height: 28, width: 120 }} /></div></div>}>
+            <CollaborateDialog activeSession={session} onStart={startSession} onLeave={leaveSession}
+              onAppEvent={handleSessionEvent} onClose={closeCollab} />
+          </Suspense>
+        </ChunkBoundary>
       )}
       {remoteOpen && (
-        <Suspense fallback={<div className="dialog-scrim"><div className="dialog card" aria-busy="true"><div className="skeleton" style={{ height: 28, width: 120 }} /></div></div>}>
-          <RemoteStorageDialog pref={syncPref && syncPref.kind !== 'local' ? syncPref : null}
-            queued={outbox.length} outbox={outbox}
-            onConnect={connectRemote} onDisconnect={disconnectRemote} onSyncNow={syncNowWithNotes}
-            onClose={closeRemote} />
-        </Suspense>
+        <ChunkBoundary onError={() => { remoteChunk.reset(); closeRemote(); panelLoadFailed('Remote storage'); }}>
+          <Suspense fallback={<div className="dialog-scrim"><div className="dialog card" aria-busy="true"><div className="skeleton" style={{ height: 28, width: 120 }} /></div></div>}>
+            <RemoteStorageDialog pref={syncPref && syncPref.kind !== 'local' ? syncPref : null}
+              queued={outbox.length} outbox={outbox}
+              onConnect={connectRemote} onDisconnect={disconnectRemote} onSyncNow={syncNowWithNotes}
+              onClose={closeRemote} />
+          </Suspense>
+        </ChunkBoundary>
       )}
       {newDialog && <NewDesignDialog onCreate={createNew} onCancel={() => setNewDialog(false)}
         onTemplates={() => { setNewDialog(false); openLibrary(); }} />}

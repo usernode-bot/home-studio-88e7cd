@@ -37,6 +37,14 @@ export function clearJournal(storage, dbName, savedDoc) {
   }
 }
 
+// Remove the journal when it holds `id`: the design was deleted, so its
+// unsaved copy must not be offered back on the next start.
+export function dropJournal(storage, dbName, id) {
+  const j = readJournal(storage, dbName);
+  if (!j || j.doc.id !== id) return;
+  try { storage.removeItem(key(dbName)); } catch { /* nothing to clear */ }
+}
+
 // The design to offer back, or null: the copy is offered when the stored
 // design is missing or older than it.
 export function recoveryOffer(journal, stored) {

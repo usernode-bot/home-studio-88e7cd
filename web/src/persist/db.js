@@ -177,10 +177,7 @@ export async function setFavorite(db, id, on) {
 export function createAutoSaver(save) {
   let timer = null;
   let pending = null;
-  const run = async () => {
-    timer = null;
-    const doc = pending;
-    pending = null;
+  const runDoc = async (doc) => {
     if (!doc) return;
     try {
       await save(doc);
@@ -189,21 +186,52 @@ export function createAutoSaver(save) {
       throw new Error('not-saved');
     }
   };
+  const run = () => {
+    if (timer) {
+      clearTimeout(timer);
+      timer = null;
+    }
+    const doc = pending;
+    pending = null;
+    return runDoc(doc);
+  };
   return {
     schedule(doc) {
+      // Another design is still waiting: save it at once (swallowing the
+      // error, as every fire-and-forget save does), then debounce the new
+      // one. Otherwise the switch would silently drop the first design's
+      // last edit.
+      if (pending && pending.id !== doc.id) {
+        const other = pending;
+        pending = null;
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+        void runDoc(other).catch(() => {});
+      }
       pending = doc;
       if (!timer) timer = setTimeout(run, 800);
     },
     // Save what is waiting now (the page is being hidden or closed).
     flush() {
       if (!timer) return Promise.resolve();
-      clearTimeout(timer);
       return run();
     },
     cancel() {
       if (timer) clearTimeout(timer);
       timer = null;
       pending = null;
+    },
+    // The design was deleted: forget only its pending save, keep others.
+    drop(id) {
+      if (pending && pending.id === id) {
+        pending = null;
+        if (timer) {
+          clearTimeout(timer);
+          timer = null;
+        }
+      }
     },
   };
 }

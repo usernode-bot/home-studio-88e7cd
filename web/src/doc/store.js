@@ -30,6 +30,9 @@ export function docReducer(state, action) {
   switch (action.type) {
     case 'load': {
       const doc = action.doc;
+      // Deleting the open design when it is the last one lands here with
+      // no document: clear the editor instead of throwing on `doc.pages`.
+      if (!doc) return { ...state, doc: null, pageId: null, selection: [], past: [], future: [], editingId: null };
       const pageId = doc.pages.find((p) => p.id === action.pageId) ? action.pageId : doc.pages[0]?.id || null;
       return { ...state, doc, pageId, selection: action.selection || [], past: [], future: [], editingId: null };
     }

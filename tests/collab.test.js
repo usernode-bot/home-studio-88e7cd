@@ -12,7 +12,7 @@ import { createSession } from '../web/src/net/session.js';
 import { mergeDocs } from '../web/src/net/merge.js';
 import { codeFrom, objFromCode } from '../web/src/net/signaling-manual.js';
 import { openNodeSignaling } from '../web/src/net/signaling-node.js';
-import { newElement } from '../web/src/doc/model.js';
+import { newElement, PAGE_MIN, PAGE_MAX } from '../web/src/doc/model.js';
 
 // ── A loopback RTCPeerConnection ─────────────────────────────────────────
 // Two of these in one process form a pair: whatever one channel sends, the
@@ -469,5 +469,68 @@ describe('the rejoin merge', () => {
     const again = mergeDocs({ doc: docOf(300, 33), tombstones: [] }, { doc: docOf(200, 22), tombstones: [] });
     expect(again.doc.pages[0].elements[0].x).toBe(33);
     expect(again.changed).toEqual([{ id: 'e1', from: 'mine' }]);
+  });
+});
+describe('pages and scoped patches from a peer', () => {
+  const page = (over = {}) => ({
+    id: 'p2', name: 'Two', width: 800, height: 600, background: '#00ffff',
+    elements: [newElement('rect', { x: 0, y: 0, w: 10, h: 10 })],
+    ...over,
+  });
+
+  it('accepts a real page on pageAdd: elements cleaned, sizes clamped, pattern dropped', () => {
+    const op = validateMessage({ t: 'pageAdd', page: page({ pattern: { x: 1 } }) }, 'op');
+    expect(op).toBeTruthy();
+    expect(op.t).toBe('pageAdd');
+    expect(op.page.id).toBe('p2');
+    expect(op.page.name).toBe('Two');
+    expect(op.page.width).toBe(800);
+    expect(op.page.height).toBe(600);
+    expect(op.page.background).toBe('#00ffff');
+    expect(op.page.elements).toHaveLength(1);
+    expect(op.page.elements[0].type).toBe('rect');
+    expect(op.page.pattern).toBeUndefined();
+  });
+
+  it('clamps an out-of-range page size and drops a bad element, keeping the page', () => {
+    const op = validateMessage({
+      t: 'pageAdd',
+      page: page({ width: 1e9, height: 1, elements: [newElement('rect', {}), { nonsense: true }] }),
+    }, 'op');
+    expect(op).toBeTruthy();
+    expect(op.page.width).toBe(PAGE_MAX);
+    expect(op.page.height).toBe(PAGE_MIN);
+    expect(op.page.elements).toHaveLength(1);
+  });
+
+  it('refuses a page with no usable identity', () => {
+    expect(validateMessage({ t: 'pageAdd', page: { name: 'X', elements: [] } }, 'op')).toBe(null);
+    expect(validateMessage({ t: 'pageAdd', page: page({ name: 'x'.repeat(121) }) }, 'op')).toBe(null);
+  });
+
+  it('docSet keeps only the name', () => {
+    const op = validateMessage({ t: 'docSet', patch: { name: 'Renamed', createdAt: 5, updatedAt: 6 } }, 'op');
+    expect(op).toBeTruthy();
+    expect(op.patch).toEqual({ name: 'Renamed' });
+  });
+
+  it('pageSet keeps only the page fields a peer may change', () => {
+    const gradient = { kind: 'linear', to: '#ffffff', angle: 45 };
+    const op = validateMessage({
+      t: 'pageSet', pageId: 'p1',
+      patch: { name: 'N', background: '#eeeeee', width: 500, height: 400, gradient, pattern: null, id: 'p1', createdAt: 1 },
+    }, 'op');
+    expect(op).toBeTruthy();
+    expect(op.patch).toEqual({ name: 'N', background: '#eeeeee', width: 500, height: 400, gradient, pattern: null });
+  });
+
+  it('pageSet clamps the size, takes a pattern only when it is removed, and refuses a patch with nothing allowed', () => {
+    const big = validateMessage({ t: 'pageSet', pageId: 'p1', patch: { width: 1e9 } }, 'op');
+    expect(big).toBeTruthy();
+    expect(big.patch.width).toBe(PAGE_MAX);
+    expect(validateMessage({ t: 'pageSet', pageId: 'p1', patch: { pattern: { x: 1 } } }, 'op')).toBe(null);
+    expect(validateMessage({ t: 'pageSet', pageId: 'p1', patch: { elements: [] } }, 'op')).toBe(null);
+    expect(validateMessage({ t: 'pageSet', pageId: 'p1', patch: { createdAt: 1 } }, 'op')).toBe(null);
+    expect(validateMessage({ t: 'docSet', patch: { createdAt: 1 } }, 'op')).toBe(null);
   });
 });
