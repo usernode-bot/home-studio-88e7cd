@@ -31,7 +31,8 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 12px 16px;
+  padding: max(12px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) 12px
+    max(16px, env(safe-area-inset-left, 0px));
   background: rgb(var(--surface));
   border-bottom: 1px solid rgb(var(--line));
 }
@@ -44,9 +45,11 @@
 
 .ib svg,.tool svg {width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 
-.toolbar {display:flex;align-items:center;gap:4px;padding:6px 12px;background:rgb(var(--surface));border-bottom:1px solid rgb(var(--line))}
+.toolbar {display:flex;align-items:center;gap:4px;padding:6px max(12px, env(safe-area-inset-right, 0px)) 6px max(12px, env(safe-area-inset-left, 0px));background:rgb(var(--surface));border-bottom:1px solid rgb(var(--line));overflow-x:auto}
 
-.tool {width:44px;height:44px;border-radius:8px;display:flex;align-items:center;justify-content:center;color:rgb(var(--fg));border:0;background:none}
+/* Fixed-width tools that overflow into a scrollable strip on a narrow
+   phone instead of shrinking under each other. */
+.tool {width:44px;height:44px;flex:none;border-radius:8px;display:flex;align-items:center;justify-content:center;color:rgb(var(--fg));border:0;background:none}
 
 .tool.on {background:rgb(var(--accent));color:rgb(var(--on-accent))}
 
@@ -56,7 +59,7 @@
 
 .btn-secondary {display:inline-flex;min-height:44px;align-items:center;justify-content:center;padding:0 16px;border-radius:8px;border:1px solid rgb(var(--line));background:rgb(var(--surface));font-weight:500;white-space:nowrap}
 
-.pages {display:flex;gap:8px;padding:10px 0 10px 16px;font-size:14px;line-height:20px;align-items:center;overflow-x:auto}
+.pages {display:flex;gap:8px;padding:10px max(16px, env(safe-area-inset-right, 0px)) 10px max(16px, env(safe-area-inset-left, 0px));font-size:14px;line-height:20px;align-items:center;overflow-x:auto}
 
 .pg {padding:6px 12px;border-radius:8px;border:1px solid rgb(var(--line));background:rgb(var(--surface));display:inline-flex;align-items:center;min-height:44px;white-space:nowrap}
 
@@ -65,6 +68,9 @@
 .pg.on {border-color:rgb(var(--accent));color:rgb(var(--accent));font-weight:600}
 
 .work {position:relative;height:430px;background:rgb(var(--raised));background-image:radial-gradient(rgb(var(--line)) 1px,transparent 1px);background-size:16px 16px;border-block:1px solid rgb(var(--line))}
+
+/* The drawn band height above stands only for the drawn screens; the app
+   sizes the band to the visible screen in the shell rules below. */
 
 .art {position:absolute;left:50px;top:28px;width:290px;height:374px;background:#fff;box-shadow:0 1px 3px rgba(0,0,0,.2);overflow:hidden}
 
@@ -114,7 +120,21 @@
    the responsive layout (drawn phone order; on a wide window the layers
    sit left of the canvas and the properties right of it), and dialogs. */
 
-.app { display: flex; flex-direction: column; min-height: 100vh; overflow: visible; }
+/* The app is a fixed shell that exactly fills the visible screen: the
+   document itself never scrolls, so browser chrome never collapses and the
+   canvas never jumps. dvh tracks the visible screen when the keyboard or
+   the address bar changes it; the vh line stays for browsers without dvh.
+   The bottom inset keeps content above the home indicator
+   (viewport-fit=cover in the shell's meta exposes the env() values). */
+.app {
+  display: flex; flex-direction: column; overflow: hidden;
+  height: 100vh; height: 100dvh; min-height: 0;
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  /* The editor chrome does not double-tap-zoom: a tap acts at once. The
+     canvas sets its own touch-action and keeps its own pinch zoom. */
+  touch-action: manipulation;
+}
+.dialog-scrim { touch-action: manipulation; }
 
 .f input, .f select {
   border: 0; background: none; padding: 0; margin: 0; font: inherit;
@@ -128,8 +148,8 @@
 .align-row { display: flex; gap: 4px; margin-top: 8px; flex-wrap: wrap; }
 .tool:disabled, .ib:disabled, .pg:disabled, .btn-primary:disabled, .btn-secondary:disabled { opacity: 0.4; cursor: default; }
 
-.dialog-scrim { position: fixed; inset: 0; background: rgb(0 0 0 / 0.35); display: flex; align-items: center; justify-content: center; padding: 16px; z-index: 20; }
-.dialog { width: 100%; max-width: 20rem; max-height: 80vh; overflow: auto; }
+.dialog-scrim { position: fixed; inset: 0; background: rgb(0 0 0 / 0.35); display: flex; align-items: center; justify-content: center; padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); z-index: 20; }
+.dialog { width: 100%; max-width: 20rem; max-height: 80vh; max-height: 80dvh; overflow: auto; }
 
 /* The empty and storage-error blocks sit centred in the canvas area. */
 .work > .state-empty, .work > .state-error {
@@ -138,23 +158,42 @@
   gap: 8px; padding: 16px; text-align: center;
 }
 /* With no design the workspace takes the rest of the window. */
-.work[data-empty] { flex: 1 1 auto; min-height: 60vh; height: auto; }
+.work[data-empty] { flex: 1 1 auto; min-height: 60vh; min-height: 60dvh; height: auto; }
 
 /* A secondary button that carries only an icon (Delete). */
 .btn-secondary svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 
-/* Phone: the drawn order, canvas above the two panels. Wide: layers left
+/* Phone: the drawn order, canvas above the two panels. The shell is a
+   fixed height, so .main scrolls inside itself and the canvas band takes
+   the height left over — the document never scrolls, so the address bar
+   never collapses mid-edit and the canvas never jumps. Wide: layers left
    of the canvas, properties right of it, canvas fills the middle. */
-.main { display: contents; }
-.work { order: 2; }
-.panel { order: 3; }
+.main { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; overflow-y: auto; }
+.work { order: 2; flex: none; height: clamp(240px, 55vh, 560px); height: clamp(240px, 55dvh, 560px); }
+.panel { order: 3; flex: none; }
 
 @media (min-width: 1024px) {
   [data-spec-screen] { max-width: none; }
-  .main { display: flex; flex: 1 1 auto; min-height: 0; }
-  .panel.layers { order: 0; width: 260px; flex: none; border-right: 1px solid rgb(var(--line)); }
+  .main { display: flex; flex-direction: row; flex: 1 1 auto; min-height: 0; overflow-y: hidden; }
+  .panel.layers { order: 0; width: 260px; flex: none; border-right: 1px solid rgb(var(--line)); overflow-y: auto; }
   .panel.props { order: 2; width: 320px; flex: none; border-left: 1px solid rgb(var(--line)); overflow-y: auto; }
   .work { order: 1; flex: 1 1 auto; height: auto; min-width: 0; }
+}
+
+/* Phone in landscape: the viewport is short, so the panels move beside the
+   canvas into one narrow column — Layers above, Properties below, each
+   scrolling on its own — and the canvas keeps the remaining height. The
+   header drops its status line to spend the rows on the canvas. */
+@media (orientation: landscape) and (max-width: 1023px) and (max-height: 500px) {
+  .main {
+    display: grid; grid-template-columns: minmax(0, 1fr) clamp(200px, 34vw, 280px);
+    grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); overflow: hidden;
+  }
+  .work { grid-column: 1; grid-row: 1 / span 2; height: auto; min-height: 0; }
+  .panel.layers { grid-column: 2; grid-row: 1; border-left: 1px solid rgb(var(--line)); border-bottom: 1px solid rgb(var(--line)); overflow-y: auto; }
+  .panel.props { grid-column: 2; grid-row: 2; border-left: 1px solid rgb(var(--line)); overflow-y: auto; }
+  .top { padding-top: max(6px, env(safe-area-inset-top, 0px)); padding-bottom: 6px; }
+  .top .sub { display: none; }
 }
 
 /* ── Phase 2: style controls and the library ────────────────────────────
@@ -174,7 +213,7 @@
 .f .range-val { min-width: 48px; text-align: right; color: rgb(var(--muted)); font-variant-numeric: tabular-nums; }
 .f input[type='checkbox'] { flex: 0 0 22px; width: 22px; height: 22px; accent-color: rgb(var(--accent)); }
 
-.dialog.lib { max-width: 56rem; height: min(88vh, 900px); display: flex; flex-direction: column; overflow: hidden; }
+.dialog.lib { max-width: 56rem; height: min(88vh, 900px); height: min(88dvh, 900px); display: flex; flex-direction: column; overflow: hidden; }
 .lib-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
 .lib .chips { flex: none; overflow-x: auto; flex-wrap: nowrap; padding-bottom: 2px; }
 .lib > .state-empty { flex: 1 1 auto; }
@@ -221,7 +260,8 @@
    of opening a file); menu rows are full-width buttons in a .list. */
 
 .notice {
-  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 16px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px;
+  padding: 8px max(16px, env(safe-area-inset-right, 0px)) 8px max(16px, env(safe-area-inset-left, 0px));
   background: rgb(var(--surface)); border-bottom: 1px solid rgb(var(--line)); font-size: 14px; line-height: 20px;
 }
 .notice > span:first-child { flex: 1 1 16rem; }
@@ -231,7 +271,7 @@
 .dialog.wide { max-width: 32rem; }
 .dialog-head { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
 .dialog-foot {
-  position: sticky; bottom: -16px; margin: 16px -16px -16px; padding: 12px 16px 16px;
+  position: sticky; bottom: -16px; margin: 16px -16px -16px; padding: 12px 16px calc(16px + env(safe-area-inset-bottom, 0px));
   background: rgb(var(--surface)); border-top: 1px solid rgb(var(--line)); display: flex; flex-direction: column; gap: 8px;
 }
 .menu-row {
@@ -247,14 +287,15 @@
 .check { width: 22px; height: 22px; accent-color: rgb(var(--accent)); flex: none; }
 
 @media (max-width: 640px) {
-  .dialog.wide { max-width: none; max-height: 92vh; }
+  .dialog.wide { max-width: none; max-height: 92vh; max-height: 92dvh; }
 }
 
 /* ── Phase 4: remote storage, collaboration, the community gallery ────── */
 
 /* The bar under the header while a room is open: who is in it, and out. */
 .collab-strip {
-  display: flex; align-items: center; gap: 10px; padding: 4px 16px;
+  display: flex; align-items: center; gap: 10px;
+  padding: 4px max(16px, env(safe-area-inset-right, 0px)) 4px max(16px, env(safe-area-inset-left, 0px));
   background: rgb(var(--surface)); border-bottom: 1px solid rgb(var(--line));
   font-size: 14px; line-height: 20px;
 }

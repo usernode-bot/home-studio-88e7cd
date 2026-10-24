@@ -2,7 +2,13 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- viewport-fit=cover exposes env(safe-area-inset-*) so padding can keep
+       content clear of the notch and home indicator;
+       interactive-widget=resizes-content (Chrome/Android) lets the layout
+       resize when the on-screen keyboard opens. Double-tap zoom is blocked
+       in CSS (touch-action: manipulation), not here, so pinch zoom and the
+       reader's own zoom settings stay available. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
 
   <script>
   // usernode-dev-console@1
@@ -90,7 +96,7 @@
       media.addEventListener('change', applyTheme);
     })();
   </script>
-  <script type="module" crossorigin src="/assets/index-DIMJ5MPD.js"></script>
+  <script type="module" crossorigin src="/assets/index-DkizMPex.js"></script>
   <link rel="stylesheet" crossorigin href="/assets/index-DH4XqHSX.css">
 </head>
 <body class="min-h-screen bg-ground text-fg">

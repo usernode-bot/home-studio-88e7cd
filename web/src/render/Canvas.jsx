@@ -13,6 +13,7 @@ import { pageBackgroundStyle, textStyles } from '../doc/style.js';
 import ElementView from './ElementView.jsx';
 import { moveElements, updateElements, addElements, removeElements, findElement } from '../doc/store.js';
 import { snapMove } from '../tools/snap.js';
+import { visibleBand, bandOverflow, useViewportMetrics } from '../ui/viewport.js';
 
 const MIN_SIZE = 8;
 const ZOOM_MIN = 0.02;
@@ -143,6 +144,41 @@ export default function Canvas({ state, dispatch, apply, page, zoom, setZoom, vi
       fit();
     }
   }, [page?.id, size.w, size.h]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A resize — rotation, keyboard, window — never re-fits: zoom and pan
+  // survive it. Only keep some of the page inside the band, so it cannot
+  // drift fully out of view. Skipped while text is being edited: the
+  // keyboard effect below owns the pan then.
+  useEffect(() => {
+    const p = live.current.page;
+    if (!p || !size.w || !size.h || live.current.state.editingId) return;
+    setView((v) => {
+      const wz = p.width * live.current.zoom;
+      const hz = p.height * live.current.zoom;
+      const xlo = 80 - wz;
+      const xhi = size.w - 80;
+      const ylo = 80 - hz;
+      const yhi = size.h - 80;
+      const x = xlo > xhi ? (xlo + xhi) / 2 : Math.min(Math.max(v.x, xlo), xhi);
+      const y = ylo > yhi ? (ylo + yhi) / 2 : Math.min(Math.max(v.y, ylo), yhi);
+      return x === v.x && y === v.y ? v : { x, y };
+    });
+  }, [size.w, size.h, setView]);
+
+  // Keep the text being edited above the on-screen keyboard. While the
+  // editor is open, every keyboard change pans the canvas (zoom untouched)
+  // so the textarea sits inside the band the keyboard leaves — iOS Safari
+  // shrinks only the visual viewport, and a canvas textarea is not a form
+  // field the browser would scroll for. The pan is a plain state set, so
+  // nothing animates and prefers-reduced-motion is honoured as is.
+  const metrics = useViewportMetrics(!!state.editingId);
+  useEffect(() => {
+    if (!state.editingId || !metrics) return;
+    const box = workRef.current && workRef.current.querySelector('.text-editor');
+    if (!box) return;
+    const dy = bandOverflow(box.getBoundingClientRect(), visibleBand(metrics, metrics.innerHeight));
+    if (dy) setView((v) => ({ x: v.x, y: v.y - dy }));
+  }, [state.editingId, metrics, setView]);
 
   const zoomAt = useCallback((factor, cx, cy) => {
     const { zoom: z } = live.current;

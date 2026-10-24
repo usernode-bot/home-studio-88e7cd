@@ -13,6 +13,11 @@
       "expectText": "No designs yet"
     },
     {
+      "name": "Viewport covers safe areas and keyboard resize",
+      "path": "/",
+      "expectSelector": "meta[name=viewport][content*=viewport-fit][content*=resizes-content]"
+    },
+    {
       "path": "/?demo=1",
       "expectText": "Garden supper",
       "visual": true,

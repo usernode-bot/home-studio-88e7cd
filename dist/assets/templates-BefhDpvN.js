@@ -1,4 +1,4 @@
-import{J as v,c as L,B as C,K as x,L as S,N as w}from"./index-DIMJ5MPD.js";import{S as A}from"./sparkles-B10m42jF.js";/**
+import{J as v,c as L,B as C,K as x,L as S,N as w}from"./index-DkizMPex.js";import{S as A}from"./sparkles-B10m42jF.js";/**
  * @license lucide v1.59.0 - ISC
  *
  * This source code is licensed under the ISC license.
