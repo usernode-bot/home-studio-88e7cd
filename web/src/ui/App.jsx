@@ -44,6 +44,7 @@ import { diffElements } from '../net/protocol.js';
 import { mergeDocs } from '../net/merge.js';
 import { retryable } from './lazy.js';
 import { ChunkBoundary } from './ErrorBoundary.jsx';
+import { useVisualViewport } from './viewport.js';
 
 const TOOLS = [
   ['select', 'Select', 'V'],
@@ -132,6 +133,8 @@ function pageSizeFor(w, h) {
 }
 
 export default function App() {
+  // The dialogs size themselves to the visible viewport (see screens.css).
+  useVisualViewport();
   const [state, dispatch] = useReducer(docReducer, undefined, initialDocState);
   const [phase, setPhase] = useState('loading'); // loading | ready | empty
   const [dbBroken, setDbBroken] = useState(false);

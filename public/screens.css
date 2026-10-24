@@ -274,3 +274,78 @@
   color: rgb(var(--on-accent)); font-size: 11px; line-height: 16px; white-space: nowrap;
 }
 .remote-select { position: absolute; pointer-events: none; z-index: 29; border: 1.5px solid; border-radius: 2px; }
+
+/* ── Mobile viewport, safe areas and keyboard ───────────────────────────
+   The editor fills exactly the part of the screen the browser shows: the
+   dynamic viewport where it is supported, the plain one where it is not.
+   Every bar pads itself away from the notch and the home indicator, so the
+   inset takes the bar's own surface colour. Double-tap zoom is off on the
+   controls; the canvas keeps its own pinch and double-tap handling. */
+
+:root { --sab: env(safe-area-inset-bottom, 0px); }
+
+.app { min-height: 100vh; min-height: 100dvh; }
+.work[data-empty] { min-height: 60vh; min-height: 60svh; }
+
+/* Phone: the canvas band follows the small viewport, which does not change
+   when the browser's bars collapse or the keyboard opens, so it never
+   jumps. Tall phones grow it instead of leaving a dead band under 430px. */
+@media (max-width: 1023px) {
+  .work { height: 430px; height: clamp(320px, 52svh, 640px); }
+}
+
+/* The canvas band is a window on the board: a page panned past its edge
+   must not paint over the bars above or the panels below (most visible
+   after a turn to landscape). */
+.work { overflow: hidden; }
+
+/* Safe areas. Side padding keeps at least the drawn padding. */
+.top { padding-top: max(12px, env(safe-area-inset-top)); }
+.top, .toolbar, .pages, .notice, .collab-strip, .panel {
+  padding-left: max(16px, env(safe-area-inset-left));
+  padding-right: max(16px, env(safe-area-inset-right));
+}
+.toolbar { padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right)); }
+.pages { padding-left: max(16px, env(safe-area-inset-left)); padding-right: max(16px, env(safe-area-inset-right)); }
+.panel.props { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
+@media (min-width: 1024px) {
+  .panel.layers, .panel.props { padding-bottom: calc(16px + env(safe-area-inset-bottom)); }
+}
+
+/* Dialogs follow the visible viewport: the visual viewport's height and
+   top offset where the browser reports them, so a keyboard opening inside
+   a dialog shrinks the scrim and the sticky footer stays on screen. */
+.dialog-scrim { top: var(--vv-top, 0px); bottom: auto; height: 100vh; }
+@supports (height: 100dvh) {
+  .dialog-scrim { height: var(--vvh, 100dvh); }
+}
+.dialog-scrim {
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+    max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+}
+.dialog { max-height: 80%; }
+.dialog-foot { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
+@media (max-width: 640px) {
+  .dialog.wide { max-height: 92%; }
+  .dialog-scrim:has(.lib) { padding: 0; }
+  .dialog.lib {
+    padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right))
+      max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+  }
+}
+
+/* No double-tap page zoom on the editor's own controls (a double-tap on
+   text on the canvas still opens it). The canvas keeps touch-action: none
+   from Canvas.jsx, so its two-finger zoom is unchanged. */
+.top, .toolbar, .pages, .collab-strip, .notice, .panel, .dialog-scrim,
+button, .chip, .pg, .tool, .ib { touch-action: manipulation; }
+
+/* Sideways on a phone: slimmer bars and a canvas sized to the rest of the
+   screen, so header, toolbar, page tabs and canvas all fit at once. The
+   controls keep their 44px height; each panel scrolls inside itself. */
+@media (orientation: landscape) and (max-height: 540px) and (max-width: 1023px) {
+  .top { padding-top: max(4px, env(safe-area-inset-top)); padding-bottom: 4px; }
+  .toolbar, .pages { padding-top: 2px; padding-bottom: 2px; }
+  .work { height: max(180px, calc(100vh - 160px)); height: max(180px, calc(100svh - 160px)); }
+  .panel { max-height: 100svh; overflow-y: auto; }
+}

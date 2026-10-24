@@ -13,6 +13,7 @@ import { pageBackgroundStyle, textStyles } from '../doc/style.js';
 import ElementView from './ElementView.jsx';
 import { moveElements, updateElements, addElements, removeElements, findElement } from '../doc/store.js';
 import { snapMove } from '../tools/snap.js';
+import { keepCentre, revealDelta } from '../ui/viewport.js';
 
 const MIN_SIZE = 8;
 const ZOOM_MIN = 0.02;
@@ -116,16 +117,27 @@ export default function Canvas({ state, dispatch, apply, page, zoom, setZoom, vi
   const els = page ? page.elements : [];
 
   // ── View: fit, zoom, pan ───────────────────────────────────────────────
+  // A width change (turning the phone) keeps the point in the middle of the
+  // canvas in the middle; a height-only change (the keyboard, the browser's
+  // bars) leaves the view alone. Zoom never changes on resize.
+  const prevSize = useRef(null);
+  const lastFitPage = useRef(null);
   useEffect(() => {
     const el = workRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => {
       const r = el.getBoundingClientRect();
-      setSize({ w: r.width, h: r.height });
+      const next = { w: r.width, h: r.height };
+      const prev = prevSize.current;
+      prevSize.current = next;
+      setSize(next);
+      if (prev && lastFitPage.current && Math.abs(next.w - prev.w) > 1) {
+        setView((v) => keepCentre(v, prev, next));
+      }
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [setView]);
 
   const fit = useCallback(() => {
     const p = live.current.page;
@@ -136,7 +148,6 @@ export default function Canvas({ state, dispatch, apply, page, zoom, setZoom, vi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size.w, size.h]);
 
-  const lastFitPage = useRef(null);
   useEffect(() => {
     if (page && lastFitPage.current !== page.id && size.w > 10) {
       lastFitPage.current = page.id;
@@ -181,6 +192,50 @@ export default function Canvas({ state, dispatch, apply, page, zoom, setZoom, vi
   useEffect(() => {
     if (onFitReady) onFitReady(api.current);
   }, [fit, size.w, size.h, zoomAt, onFitReady]);
+
+  // ── Text editing and the on-screen keyboard ───────────────────────────
+  // Put the text being typed above the keyboard: scroll the page, and when
+  // the page cannot scroll any further (the canvas fills the window), pan
+  // the canvas by what is left. That pan stays after the keyboard closes.
+  const textRef = useRef(null);
+  const revealEditing = useCallback(() => {
+    const ta = textRef.current;
+    if (!ta || !ta.isConnected) return;
+    const sab = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--sab')) || 0;
+    const vv = window.visualViewport;
+    const visible = vv
+      ? { top: vv.offsetTop, bottom: vv.offsetTop + vv.height - sab }
+      : { top: 0, bottom: window.innerHeight - sab };
+    const d = revealDelta(ta.getBoundingClientRect(), visible);
+    if (d === 0) return;
+    const root = document.scrollingElement || document.documentElement;
+    const room = d > 0
+      ? Math.max(0, root.scrollHeight - window.innerHeight - window.scrollY)
+      : Math.max(0, window.scrollY);
+    const applied = d > 0 ? Math.min(d, room) : -Math.min(-d, room);
+    if (applied !== 0) {
+      const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      window.scrollBy({ top: applied, behavior: reduce ? 'instant' : 'smooth' });
+    }
+    const remainder = d - applied;
+    if (remainder > 0) setView((v) => ({ x: v.x, y: v.y - remainder }));
+  }, [setView]);
+
+  useEffect(() => {
+    if (!state.editingId) return undefined;
+    const ta = textRef.current;
+    if (!ta) return undefined;
+    // Our own scroll places the text; the browser's jump to the field
+    // would fight it.
+    ta.focus({ preventScroll: true });
+    revealEditing();
+    const vv = window.visualViewport;
+    if (!vv) return undefined;
+    // The keyboard slides in after focus, so follow its own resize.
+    vv.addEventListener('resize', revealEditing);
+    return () => vv.removeEventListener('resize', revealEditing);
+  }, [state.editingId, revealEditing]);
+
 
   // ── Gesture plumbing ──────────────────────────────────────────────────
   const onGestureMove = useCallback((e) => {
@@ -543,7 +598,7 @@ const stableDbl = useCallback((el) => {
           {draft && draft.kind !== 'marquee' && <ElementView el={draft} images={images} />}
           {editingEl && (
             <textarea
-              autoFocus
+              ref={textRef}
               className="text-editor"
               style={{
                 position: 'absolute',
@@ -565,6 +620,8 @@ const stableDbl = useCallback((el) => {
                   const el = findElement(doc.pages.find((p) => p.id === page.id).elements, editingEl.id);
                   el.h = measureTextHeight(el);
                 }, false);
+                // The box grew with the text; keep the caret in view.
+                requestAnimationFrame(revealEditing);
               }}
               onBlur={() => live.current.dispatch({ type: 'editing', id: null })}
               onKeyDown={(e) => {
@@ -619,7 +676,7 @@ const stableDbl = useCallback((el) => {
           );
         })()}
       </div>
-      <div className="zoom" style={{ position: 'absolute', right: 12, bottom: 10, zIndex: 6 }}>
+      <div className="zoom" style={{ position: 'absolute', right: 'calc(12px + env(safe-area-inset-right))', bottom: 10, zIndex: 6 }}>
         <button type="button" onClick={() => zoomAt(1 / 1.25, size.w / 2, size.h / 2)} aria-label="Zoom out">−</button>
         <button type="button" onClick={fit} aria-label={'Zoom ' + Math.round(zoom * 100) + '%, tap to fit the page to the window'}>{Math.round(zoom * 100)}%</button>
         <button type="button" onClick={() => zoomAt(1.25, size.w / 2, size.h / 2)} aria-label="Zoom in">+</button>
