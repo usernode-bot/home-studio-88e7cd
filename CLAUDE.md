@@ -164,6 +164,15 @@ the way design tools have long marked guides.
 - Lazy chunks go through `retryable()` (`web/src/ui/lazy.js`) inside a
   `ChunkBoundary` (`web/src/ui/ErrorBoundary.jsx`), so a failed load can be
   retried instead of caching the failure.
+- Remove background is a lazy chunk (`RemoveBackgroundDialog.jsx`) plus a
+  Worker (`web/src/bgremove/`) running onnxruntime-web on one thread. Its
+  model is `public/models/u2netp-uint8.onnx` (see the NOTICE beside it),
+  always served from this app, never fetched from another origin, and
+  checked against `MODEL_SHA256` before use. Keep models under 5 MB (a
+  46 MB one made the change too big to export; a test enforces it). A new
+  model gets a new file name and hash: the service worker keeps the old one
+  in its `home-studio-helper` cache. The CSP's `'wasm-unsafe-eval'` is what
+  lets the runtime compile; it doesn't allow JavaScript eval.
 
 The kit is in `styles/tailwind-input.css`: colour tokens with a light and
 a dark value (named in `tailwind.config.js`), and a few components

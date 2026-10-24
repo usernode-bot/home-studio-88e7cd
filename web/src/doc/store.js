@@ -136,6 +136,23 @@ export function updateElements(doc, pageId, ids, patch) {
   return doc;
 }
 
+// Whether image element `elId` on the page still shows the picture
+// `imageId`: an edit made from a dialog checks this first, since the element
+// may have been deleted, undone or changed by a collaborator meanwhile.
+export function imageStillShown(doc, pageId, elId, imageId) {
+  const page = doc && doc.pages.find((p) => p.id === pageId);
+  const el = page && findElement(page.elements, elId);
+  return !!el && el.type === 'image' && el.imageId === imageId;
+}
+
+// Swap the picture an image element shows (a background removed), keeping
+// its place, size, crop and style. Does nothing unless it still shows
+// `fromId`.
+export function replaceImage(doc, pageId, elId, fromId, { imageId, natW, natH }) {
+  if (!imageStillShown(doc, pageId, elId, fromId)) return doc;
+  return updateElements(doc, pageId, [elId], { imageId, natW, natH });
+}
+
 // Move top-level elements by dx, dy. A group moves as one: its own x/y
 // change, its children (relative to the group) come along.
 export function moveElements(doc, pageId, ids, dx, dy) {

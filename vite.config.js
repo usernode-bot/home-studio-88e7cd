@@ -6,6 +6,8 @@ export default defineConfig({
   root: 'web',
   plugins: [react(), serviceWorker({ source: 'web/sw.js', publicDir: 'public' })],
   publicDir: '../public',
+  // The background remover's worker imports onnxruntime-web as a module.
+  worker: { format: 'es' },
   build: {
     outDir: '../dist',
     emptyOutDir: true,
