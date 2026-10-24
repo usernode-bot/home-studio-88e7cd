@@ -10,12 +10,16 @@
 //   which also keeps fonts a design used available offline.
 // - The platform's hosted files (bridge, kit) go to the network first and
 //   fall back to the last copy, so offline loads still have them.
+// - The background remover's runtime (.wasm) and model (/models/) are
+//   cached the first time they are used, in a cache of their own that a new
+//   version leaves alone, so a new build doesn't mean a new download.
 // - /api/ is never touched: those requests always reach the network.
 
 const VERSION = self.__HS_VERSION__;
 const PRECACHE = self.__HS_PRECACHE__;
 const CACHE = `home-studio-${VERSION}`;
 const SHELL = '/index.html';
+const HELPER = 'home-studio-helper';
 
 self.addEventListener('install', (event) => {
   event.waitUntil((async () => {
@@ -33,7 +37,7 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil((async () => {
-    const keys = (await caches.keys()).filter((k) => k.startsWith('home-studio-') && k !== CACHE);
+    const keys = (await caches.keys()).filter((k) => k.startsWith('home-studio-') && k !== CACHE && k !== HELPER);
     // The newest previous cache survives one more version: a page still
     // running the old code asks for its own hashed files right after this
     // swap, and the new cache does not hold them yet. Older caches go.
@@ -55,8 +59,8 @@ async function networkFirst(request, cacheKey) {
   }
 }
 
-async function cacheFirst(request) {
-  const cache = await caches.open(CACHE);
+async function cacheFirst(request, name = CACHE) {
+  const cache = await caches.open(name);
   const hit = await cache.match(request);
   if (hit) return hit;
   const res = await fetch(request);
@@ -87,6 +91,12 @@ self.addEventListener('fetch', (event) => {
         throw err;
       }
     })());
+    return;
+  }
+  // The background remover's files: a new model ships under a new file
+  // name, and the hashed .wasm changes name with its content.
+  if (url.pathname.startsWith('/models/') || (url.pathname.startsWith('/assets/') && url.pathname.endsWith('.wasm'))) {
+    event.respondWith(cacheFirst(req, HELPER));
     return;
   }
   if (url.pathname.startsWith('/assets/')) {

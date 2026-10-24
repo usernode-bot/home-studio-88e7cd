@@ -37,6 +37,12 @@ no accounts, no network features, no paid anything.
   - **Images:** crop from each edge (keeping proportions), masks (circle,
     rounded, arch, triangle, diamond, hexagon, star), flips, seven filters
     and seven adjustment sliders.
+  - **Remove background:** cuts the subject out of a photo, on your own
+    device, with a preview to Apply or Cancel; Undo brings the background
+    back. The first time it downloads a helper of about 16 MB (the U²-Net-p
+    model, Apache-2.0, and the onnxruntime-web engine, MIT) from this app
+    itself; after that it works offline. Export as PNG with Transparent
+    background for a transparent file.
   - **Graphics:** SVG icons and imported SVGs, recolourable when drawn in
     one colour.
   With nothing selected it edits the page itself: name, size, background

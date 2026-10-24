@@ -250,6 +250,18 @@
   .dialog.wide { max-width: none; max-height: 92vh; }
 }
 
+/* Remove background: the preview sits on a checkerboard of the app's own
+   greys, so what turns transparent can be seen in both looks. */
+.checker {
+  display: flex; align-items: center; justify-content: center; height: min(320px, 40vh); padding: 8px;
+  border: 1px solid rgb(var(--line)); border-radius: 12px; background-color: rgb(var(--surface));
+  background-image:
+    linear-gradient(45deg, rgb(var(--raised)) 25%, transparent 25%, transparent 75%, rgb(var(--raised)) 75%),
+    linear-gradient(45deg, rgb(var(--raised)) 25%, transparent 25%, transparent 75%, rgb(var(--raised)) 75%);
+  background-size: 20px 20px; background-position: 0 0, 10px 10px;
+}
+.checker img { max-width: 100%; max-height: 100%; object-fit: contain; display: block; }
+
 /* ── Phase 4: remote storage, collaboration, the community gallery ────── */
 
 /* The bar under the header while a room is open: who is in it, and out. */

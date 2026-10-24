@@ -10,6 +10,7 @@ import {
 } from '../doc/style.js';
 import { SYSTEM_LABELS, BUNDLED_FONTS, listUserFonts, fontLabel, ensureFont, fontStack } from '../assets/fonts.js';
 import { isRecolorable } from '../assets/svg.js';
+import { DOWNLOAD_MB } from '../bgremove/info.js';
 
 const HEX = /^#[0-9a-fA-F]{6}$/;
 
@@ -244,7 +245,7 @@ function TextEffectsSection({ el, set, live }) {
 }
 
 // ── Images ───────────────────────────────────────────────────────────────
-function ImageSection({ el, set, live }) {
+function ImageSection({ el, set, live, onRemoveBackground }) {
   const crop = normalizeCrop(el.crop);
   const setCrop = (k, pct) => {
     const next = normalizeCrop({ ...crop, [k]: pct / 100 });
@@ -255,6 +256,16 @@ function ImageSection({ el, set, live }) {
     ADJUSTMENTS.every(([a]) => adjust[a] === ({ ...ADJUST_DEFAULTS, ...FILTER_PRESETS[k].adjust })[a]));
   return (
     <>
+      {onRemoveBackground && el.imageId && (
+        <Section title="Background" data="background">
+          <button type="button" className="btn-secondary" style={{ gridColumn: 'span 2' }} onClick={() => onRemoveBackground(el)} data-remove-bg>
+            Remove background
+          </button>
+          <p className="sub" style={{ gridColumn: 'span 2', margin: '0 4px' }}>
+            Works on your device. The first time downloads a helper of about {DOWNLOAD_MB} MB.
+          </p>
+        </Section>
+      )}
       <Section title="Crop and mask" data="crop">
         <NumField label="Left %" value={Math.round(crop.l * 100)} onCommit={(v) => setCrop('l', v)} />
         <NumField label="Right %" value={Math.round(crop.r * 100)} onCommit={(v) => setCrop('r', v)} />
@@ -283,7 +294,7 @@ function ImageSection({ el, set, live }) {
 }
 
 // Everything below the position grid for one selected element.
-export function StyleSections({ el, set, live, setText }) {
+export function StyleSections({ el, set, live, setText, onRemoveBackground }) {
   const t = el.type;
   const filled = t === 'rect' || t === 'ellipse' || t === 'shape';
   return (
@@ -310,7 +321,7 @@ export function StyleSections({ el, set, live, setText }) {
           <ColorField label="Colour" value={el.color} onCommit={(v, first) => live({ color: v }, first)} />
         </Section>
       )}
-      {t === 'image' && <ImageSection el={el} set={set} live={live} />}
+      {t === 'image' && <ImageSection el={el} set={set} live={live} onRemoveBackground={onRemoveBackground} />}
       {(filled || t === 'line' || t === 'image') && <BorderSection el={el} set={set} live={live} />}
       <ShadowSection el={el} set={set} live={live} />
     </>

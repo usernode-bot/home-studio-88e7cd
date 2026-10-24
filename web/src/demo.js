@@ -26,6 +26,66 @@ function seedPage1() {
   return page;
 }
 
+// ── The demo photo ───────────────────────────────────────────────────────
+// A drawing, not a real photo: a mug on a table against a teal wall, drawn
+// on a canvas when the demo is seeded (Home Studio's own, CC0), so Remove
+// background has something to work on. It has a design of its own.
+const DEMO_PHOTO_ID = 'd-photo-img';
+const DEMO_PHOTO = { w: 760, h: 520 };
+
+function mugSticker() {
+  const design = newDesign('Staging demo photo', 1000, 1000);
+  design.createdAt = Date.now() - 4 * HOUR;
+  design.updatedAt = Date.now() - 3 * HOUR;
+  const page = design.pages[0];
+  page.background = '#ffffff';
+  page.elements = [
+    { id: 'm-photo', type: 'image', name: 'Staging demo photo', x: 120, y: 160, w: 760, h: 520, rotation: 0, opacity: 1, imageId: DEMO_PHOTO_ID, natW: DEMO_PHOTO.w, natH: DEMO_PHOTO.h },
+    { id: 'm-title', type: 'text', name: 'Title', x: 120, y: 760, w: 760, h: 90, rotation: 0, opacity: 1, text: 'Mug sticker', font: 'rounded', size: 72, weight: 700, align: 'center', color: '#1c1917' },
+  ];
+  return design;
+}
+
+function drawDemoPhoto(ctx, w, h) {
+  const wall = ctx.createLinearGradient(0, 0, w, h);
+  wall.addColorStop(0, '#2f7f78');
+  wall.addColorStop(1, '#4fa89a');
+  ctx.fillStyle = wall;
+  ctx.fillRect(0, 0, w, h);
+  ctx.fillStyle = '#c9a27a';
+  ctx.fillRect(0, h * 0.72, w, h * 0.28);
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.18)';
+  ctx.beginPath();
+  ctx.ellipse(w * 0.5, h * 0.8, 150, 22, 0, 0, Math.PI * 2);
+  ctx.fill();
+  // The handle, then the body over it, then the coffee.
+  ctx.strokeStyle = '#efe8da';
+  ctx.lineWidth = 30;
+  ctx.beginPath();
+  ctx.ellipse(w * 0.5 + 125, h * 0.5, 62, 78, 0, -Math.PI / 2, Math.PI / 2);
+  ctx.stroke();
+  ctx.fillStyle = '#f4efe4';
+  ctx.beginPath();
+  ctx.roundRect(w * 0.5 - 130, h * 0.22, 260, h * 0.58, [12, 12, 48, 48]);
+  ctx.fill();
+  ctx.fillStyle = '#e4ddcf';
+  ctx.fillRect(w * 0.5 - 130, h * 0.42, 260, 26);
+  ctx.fillStyle = '#5b3a24';
+  ctx.beginPath();
+  ctx.ellipse(w * 0.5, h * 0.22 + 4, 118, 16, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+// The demo's pictures as [{ id, blob }], for the images store. Browser only.
+export async function buildDemoImages() {
+  const c = document.createElement('canvas');
+  c.width = DEMO_PHOTO.w;
+  c.height = DEMO_PHOTO.h;
+  drawDemoPhoto(c.getContext('2d'), c.width, c.height);
+  const blob = await new Promise((resolve) => c.toBlob(resolve, 'image/png'));
+  return blob ? [{ id: DEMO_PHOTO_ID, blob }] : [];
+}
+
 function seedPage2() {
   const page = newPage('Menu', 1080, 1350);
   page.background = '#fafaf9';
@@ -86,7 +146,7 @@ export function buildDemoDesigns() {
   poster.createdAt = Date.now() - 2 * HOUR;
   poster.updatedAt = Date.now() - HOUR;
   poster.pages = [seedPage1(), seedPage2(), seedPage3()];
-  return [poster, bakeSaleFlyer(), plantSwapSign()];
+  return [poster, bakeSaleFlyer(), mugSticker(), plantSwapSign()];
 }
 
 // ── The demo gallery source ──────────────────────────────────────────────

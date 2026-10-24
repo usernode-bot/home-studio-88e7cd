@@ -14,6 +14,7 @@ import { icons } from './icons.jsx';
 import {
   docReducer, initialDocState, pageOf, addElements, moveElements, removeElements, updateElements,
   duplicateSelection, groupSelection, ungroupSelection, pageAdd, reorderElement, pageDelete, pageUpdate, touch, bump,
+  imageStillShown, replaceImage,
 } from '../doc/store.js';
 import {
   newDesign, newPage, newElement, uid, measureTextHeight, imageIdsIn, unionBoxes, boundsOfElement, PAGE_MAX, PAGE_MIN, walk,
@@ -65,11 +66,15 @@ const remoteChunk = retryable(() => import('./RemoteStorageDialog.jsx'));
 // The exporters load the first time someone exports, pdf.js the first time
 // a PDF is opened.
 const exportChunk = retryable(() => import('./ExportDialog.jsx'));
+// The background remover (its dialog, worker, runtime and model) loads the
+// first time someone presses Remove background.
+const bgChunk = retryable(() => import('./RemoveBackgroundDialog.jsx'));
 const Library = libraryChunk.Component;
 const GalleryDialog = galleryChunk.Component;
 const CollaborateDialog = collabChunk.Component;
 const RemoteStorageDialog = remoteChunk.Component;
 const ExportDialog = exportChunk.Component;
+const RemoveBackgroundDialog = bgChunk.Component;
 const loadPdfImport = () => import('../import/pdf.js');
 
 const OPEN_ACCEPT = `${IMAGE_ACCEPT},image/svg+xml,.svg,application/pdf,.pdf,application/json,.json`;
@@ -163,6 +168,7 @@ export default function App() {
   const [importError, setImportError] = useState('');
   const [fileMenu, setFileMenu] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [bgTarget, setBgTarget] = useState(null); // { pageId, elId, imageId, ready }: the photo in Remove background
   const [versionsOpen, setVersionsOpen] = useState(false);
   const [backupOpen, setBackupOpen] = useState(null); // null, or { restore: parsed backup | null }
   const [notice, setNotice] = useState(null); // { tone: 'info' | 'error', text }
@@ -313,6 +319,7 @@ export default function App() {
       void storageStatus().then((st) => { if (st && st.level !== 'ok') setQuota({ level: st.level, dismissed: false }); });
       if (useDemo && !(await listDesigns(db)).length) {
         for (const d of demoMod.buildDemoDesigns()) await putDesign(db, d);
+        for (const img of await demoMod.buildDemoImages().catch(() => [])) await putImage(db, img.id, img.blob);
       }
       const list = await listDesigns(db);
       setDesigns(list);
@@ -682,6 +689,33 @@ export default function App() {
       showImportError("The component couldn't be saved on this device.");
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Remove background: the dialog works on the photo as it was when opened.
+  // `ready` skips the download question once the helper has been fetched.
+  const openRemoveBackground = useCallback(async (el) => {
+    const p = currentPage();
+    if (!p || !el.imageId || !imagesRef.current[el.imageId]) return;
+    const ready = dbLive.current ? !!(await getPref(dbLive.current, 'bgModelReady').catch(() => false)) : false;
+    setBgTarget({ pageId: p.id, elId: el.id, imageId: el.imageId, ready });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Apply: the cut-out is a new picture under a new id, swapped in as one
+  // history entry. The old picture stays stored: undo and versions use it.
+  const applyCutout = useCallback(async (result) => {
+    const t = bgTarget;
+    if (!t) return;
+    if (!imageStillShown(stateRef.current.doc, t.pageId, t.elId, t.imageId)) {
+      setBgTarget(null);
+      showNotice('error', 'The photo changed while its background was being removed, so nothing was applied. Try again.');
+      return;
+    }
+    const id = uid();
+    try { if (dbLive.current) await putImage(dbLive.current, id, result.blob); } catch { /* shows until reload */ }
+    setImages((m) => ({ ...m, [id]: URL.createObjectURL(result.blob) }));
+    apply((dr) => replaceImage(dr, t.pageId, t.elId, t.imageId, { imageId: id, natW: result.w, natH: result.h }), true);
+    setBgTarget(null);
+    showNotice('info', 'Background removed. Undo brings it back.');
+  }, [bgTarget, apply, showNotice]);
 
   const copyDesign = useCallback(async (id) => {
     if (!dbLive.current) return;
@@ -1419,7 +1453,7 @@ export default function App() {
             images={images} onFitReady={(a) => (apiRef.current = a)} />
           <Inspector state={state} dispatch={dispatch} apply={apply} page={p2}
             onAddImage={() => fileRef.current && fileRef.current.click()} imgError={imgError}
-            onSaveComponent={saveAsComponent} />
+            onSaveComponent={saveAsComponent} onRemoveBackground={openRemoveBackground} />
           {session && <RemoteCursors session={session} page={p2} zoom={zoom} peers={peers} selection={state.selection} />}
         </div>
       )}
@@ -1442,6 +1476,16 @@ export default function App() {
           <Suspense fallback={<div className="dialog-scrim"><div className="dialog card wide" aria-busy="true"><div className="skeleton" style={{ height: 28, width: 120 }} /></div></div>}>
             <ExportDialog design={doc} pageId={p2.id} onClose={() => setExportOpen(false)} onDownload={downloadBlob}
               deps={{ getImage: fileAccess.getImage, getFontBlob: fileAccess.getFontBlob, project: () => collectProject(stateRef.current.doc, fileAccess) }} />
+          </Suspense>
+        </ChunkBoundary>
+      )}
+      {bgTarget && images[bgTarget.imageId] && (
+        <ChunkBoundary onError={() => { bgChunk.reset(); setBgTarget(null); panelLoadFailed('Remove background'); }}>
+          <Suspense fallback={<div className="dialog-scrim"><div className="dialog card wide" aria-busy="true"><div className="skeleton" style={{ height: 28, width: 120 }} /></div></div>}>
+            <RemoveBackgroundDialog photoUrl={images[bgTarget.imageId]} ready={bgTarget.ready}
+              getBlob={() => fileAccess.getImage(bgTarget.imageId)}
+              onReady={() => { if (dbLive.current) void setPref(dbLive.current, 'bgModelReady', true).catch(() => {}); }}
+              onApply={applyCutout} onClose={() => setBgTarget(null)} />
           </Suspense>
         </ChunkBoundary>
       )}

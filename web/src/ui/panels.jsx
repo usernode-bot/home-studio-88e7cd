@@ -142,7 +142,7 @@ function reorderRow(page, apply) {
 
 // ── Properties inspector ─────────────────────────────────────────────────
 
-export function Inspector({ state, dispatch, apply, page, onAddImage, imgError, onSaveComponent }) {
+export function Inspector({ state, dispatch, apply, page, onAddImage, imgError, onSaveComponent, onRemoveBackground }) {
   const sel = state.selection.map((id) => page.elements.find((el) => el.id === id)).filter(Boolean);
   const one = sel.length === 1 ? sel[0] : null;
   const pageMode = sel.length === 0;
@@ -241,7 +241,7 @@ export function Inspector({ state, dispatch, apply, page, onAddImage, imgError, 
             <NumField label="Angle" value={Math.round(one.rotation || 0)} onCommit={(v) => setOne({ rotation: v })} />
             <NumField label="Opacity" value={Math.round((one.opacity ?? 1) * 100)} onCommit={(v) => setOne({ opacity: Math.min(1, Math.max(0, v / 100)) })} />
           </div></div>
-          <StyleSections el={one} set={setOne} live={setLive} setText={setText} />
+          <StyleSections el={one} set={setOne} live={setLive} setText={setText} onRemoveBackground={onRemoveBackground} />
           {(state.selection.length > 1 || showAlign) && sel.length > 0 && (
             <div className="align-row" data-align>
               {[['left', 'Left'], ['hcenter', 'Centre X'], ['right', 'Right'], ['top', 'Top'], ['vmiddle', 'Middle'], ['bottom', 'Bottom']].map(([mode, label]) => (

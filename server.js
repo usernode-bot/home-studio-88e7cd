@@ -86,12 +86,14 @@ const PLATFORM_ORIGIN = (process.env.USERNODE_PLATFORM_ORIGIN || '')
 // and style out (everything the app loads is same-origin, data: or blob:
 // by design) and names who may frame the app: itself and the platform
 // shell that embeds it. no-referrer keeps a ?token= in an address from
-// travelling with an outbound navigation.
+// travelling with an outbound navigation. 'wasm-unsafe-eval' lets the
+// background remover compile its own same-origin WebAssembly runtime; it
+// does not allow eval() of JavaScript.
 app.use((_req, res, next) => {
   res.set({
     'content-security-policy': [
       "default-src 'self'",
-      "script-src 'self'" + (INLINE_SCRIPT_HASHES.length ? ' ' + INLINE_SCRIPT_HASHES.join(' ') : ''),
+      "script-src 'self' 'wasm-unsafe-eval'" + (INLINE_SCRIPT_HASHES.length ? ' ' + INLINE_SCRIPT_HASHES.join(' ') : ''),
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob:",
       "font-src 'self' data: blob:",
